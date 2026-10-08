@@ -1,0 +1,16 @@
+# chess-coach runtime requirements
+#
+# Everything else the project uses is Python stdlib (urllib for the public
+# Chess.com / Lichess APIs, json/csv/dataclasses for output, re for the
+# recurring-weakness heuristics).
+#
+#   py -3.14 -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements.txt
+
+chess==1.11.2
+
+# Supplies the CA bundle for the public Chess.com / Lichess APIs. Without it,
+# Python on Windows has no default certificate store and urlopen fails with
+# CERTIFICATE_VERIFY_FAILED. fetch_games.py degrades gracefully if it is absent,
+# but with it downloads just work.
+certifi>=2024.2.2
