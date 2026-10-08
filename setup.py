@@ -771,6 +771,21 @@ def verify(record: dict) -> bool:
     for key in ("stockfish", "lc0", "net"):
         if record.get(key):
             say(f"    {key}: {record[key]}")
+
+    # The project keeps no test files, so the pure logic -- the `me` alias and the
+    # archive skip rule -- is checked by the modules that own it. Cheap, offline,
+    # and impossible to forget because it runs with the rest of the verification.
+    step("self-tests")
+    for module, label in (("player", "--player me"), ("process_api.fetcher", "archive skip rule")):
+        try:
+            __import__(module)
+            failed = sys.modules[module].self_test()
+        except Exception as exc:  # a broken import is itself a failure
+            failed, label = 1, f"{label} ({exc})"
+        if failed:
+            ok = False
+            warn(f"self-test failed: {label}")
+
     return ok
 
 

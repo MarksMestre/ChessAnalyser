@@ -1,0 +1,18 @@
+# Username behind `--player me`. Git-ignored because it is personal.
+#
+# Copy this file to player.txt and put your own usernames in it:
+#
+#   copy player_example.txt player.txt
+#
+# Then every command takes --player me instead of a real name:
+#
+#   python fetch_games.py --player me --site chesscom
+#   python analyze.py     --player me --out out
+#
+# Format: `site=name` picks the name for that site only; a bare `name` line is
+# the fallback for any site without its own entry. `#` starts a comment.
+#
+# Only fill in the sites you actually use. A single-platform player can drop
+# this to one line, e.g. just `chesscom=yourname`.
+chesscom=CHESS.COM USERNAME
+lichess=LICHESS USERNAME

@@ -15,7 +15,7 @@ the usual run needs no username typed at all — see `--player me` below.
 > **[commands.md](commands.md)** is the full reference: every command, every flag with
 > its default, worked examples, measured runtimes and recipes for common jobs.
 > The [Command summary](commands.md#command-summary) at its end is a one-page cheat
-> sheet.
+> sheet. Notable changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -127,34 +127,40 @@ python analyze.py     --player me --out out
 python -m process_api.cli --player me
 ```
 
-It resolves from `$CHESS_COACH_PLAYER`, then `player.txt` in the project root —
-a git-ignored file you create once:
+It resolves from `$CHESS_COACH_PLAYER`, then `player.txt` in the project root.
+`player.txt` is git-ignored because a username is personal; copy the template
+once and fill it in:
+
+```powershell
+copy player_example.txt player.txt
+```
 
 ```
-# username(s) behind --player me
-chesscom=yourname
-lichess=yourname
+# player.txt
+chesscom=CHESS.COM USERNAME
+lichess=LICHESS USERNAME
 ```
 
 A `site=name` line applies to that platform only; a bare `name` line is the
 fallback for any site without its own entry, so a single-platform player can
-just write `yourname`. Site names are forgiving — `chess.com` and `chess-com` both
-mean `chesscom`.
+just write one line. Site names are forgiving — `chess.com` and `chess-com` both
+mean `chesscom`. Fill in only the sites you use.
 
-**It is an alias, not a mode.** An explicit `--player yourname` still works and is
-passed through untouched, so `me` and a real name mix freely in shell history and
-scripts. Every command also defaults to `me`, so `python analyze.py --out out` is
-enough.
+**It is an alias, not a mode.** An explicit `--player yourname` still works and
+is passed through untouched, so `me` and a real name mix freely in shell history
+and scripts. Every command also defaults to `me`, so `python analyze.py --out out`
+is enough.
 
 Two details worth knowing:
 
-- **analyse.py resolves without a site**, because it matches a PGN, which is not a
+- **analyze.py resolves without a site**, because it matches a PGN, which is not a
   platform. A `player.txt` with only `chesscom=…` lines still resolves there: the
   bare default wins if you have one, otherwise the first configured site does.
-- **a name that matches no game in the PGN is now an error** instead of a report
+- **a name that matches no game in the PGN is an error** instead of a report
   full of empty games. It names the White and Black players of the first game so
-  you can see what to pass. Chess.com capitalises handles, so `--player yourname`
-  matches a `YOURNAME` header — matching is case-insensitive.
+  you can see what to pass. Chess.com capitalises handles, so a lowercase
+  `chesscom=yourname` matches an uppercase `YOURNAME` header — matching is
+  case-insensitive.
 
 ### fetch_games.py — download your archive
 
@@ -175,21 +181,27 @@ python -m process_api.cli --player me
 python -m process_api.cli --verify
 ```
 
-Same public API, but it only re-downloads what can have changed. `data/metadata.json`
-records every month already fetched, and a month is skipped when it is both recorded
-*and* outside the current calendar month — Chess.com keeps adding games to the open
-month for all of it, so that one is re-checked every run, while closed months cost
-nothing. In practice a steady-state run is **one request** plus the open month,
-whatever the size of your archive.
+Same public API, but it only re-downloads what can have changed.
+`process_api\data\metadata.json` records every month already fetched, and a month is
+skipped when it is both recorded *and* outside the current calendar month — Chess.com
+keeps adding games to the open month for all of it, so that one is re-checked every
+run, while closed months cost nothing. In practice a steady-state run is **one
+request** plus the open month, whatever the size of your archive.
 
-Games land one file per game under `data/pgn/<YYYY-MM>/<uuid>.pgn`, deduplicated by
-uuid, so re-running cannot duplicate a game and an interrupted run cannot lose one.
-`--verify` re-derives what is on disk and compares it to what was recorded, so the
-"already up to date" claim is checkable rather than assumed.
+Games land one file per game under `process_api\data\pgn\<YYYY-MM>\<uuid>.pgn`,
+deduplicated by uuid, so re-running cannot duplicate a game and an interrupted run
+cannot lose one. `--verify` re-derives what is on disk and compares it to what was
+recorded, so the "already up to date" claim is checkable rather than assumed.
+
+Everything it writes lives under `process_api\data\`, which is git-ignored: the
+scripts are tracked, the data is rebuilt by the command above. Nothing else is
+needed to configure it — `--player me` resolves the username. `api.txt` exists only
+as an alternative way to name the account, and is not required; see
+`process_api\api_example.txt`.
 
 | Flag | Meaning |
 |---|---|
-| `--player` | username, or `me`; overrides the URL in `api.txt` |
+| `--player` | username, or `me` |
 | `--dry-run` | print the skip/fetch decision per month and exit |
 | `--month YYYY-MM` | restrict to one archive |
 | `--force` | ignore the skip rule, re-fetch everything |
@@ -198,11 +210,9 @@ uuid, so re-running cannot duplicate a game and an interrupted run cannot lose o
 | `--verify` | check recorded metadata against the PGN on disk |
 | `--reset` | drop metadata so the next run re-fetches (`--delete-pgn` removes the files) |
 
-Tests, no network:
-
-```powershell
-.venv\Scripts\python -m unittest discover -s process_api -t .
-```
+It writes everything under `process_api\data\`, which is git-ignored: the scripts
+are tracked, the data is regenerated by the command above. It needs no
+configuration file — `--player me` resolves the username.
 
 ### analyze.py — analyse
 
@@ -283,8 +293,21 @@ works on a plane.
 
 ## Verifying it
 
-`games\opera.pgn` is Morphy vs the Duke of Brunswick and Count Isouard, Paris
-1858 — the game with the famous 16.Qb8+ queen sacrifice.
+There are no test files in this repo. The pure logic — the `--player me` alias and
+the archive skip rule — is checked by a `--self-test` flag on the module that owns
+it, so a check cannot drift away from the code it describes:
+
+```powershell
+python setup.py --verify                              # runs both, last step
+python player.py --self-test                          # 43 checks, the alias
+python -m process_api.fetcher --self-test             # 23 checks, the skip rule
+```
+
+Both are offline, take under a second, and touch nothing outside a temp directory.
+
+To confirm the *engines* work rather than the logic, `games\opera.pgn` is Morphy
+vs the Duke of Brunswick and Count Isouard, Paris 1858 — the game with the famous
+16.Qb8+ queen sacrifice.
 
 ```powershell
 python analyze.py --pgn games\opera.pgn --player Morphy --out out_test

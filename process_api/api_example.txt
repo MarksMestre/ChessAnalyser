@@ -1,0 +1,16 @@
+# Chess.com archive-list URL, used only when --player is not given.
+#
+# Copy this file to api.txt and put your own username in it:
+#
+#   copy api_example.txt api.txt
+#
+# Both are public, login-free endpoints, so there is no key here and nothing
+# secret to protect -- api.txt is git-ignored only so your username stays out of
+# shell history and out of the repository.
+#
+# Normally you do not need this file at all: put your username in player.txt at
+# the project root (see player_example.txt) and pass --player me instead, which
+# covers this command and every other one.
+#
+# One line, the archive list. Per-game archives are discovered from it.
+https://api.chess.com/pub/player/CHESS.COM USERNAME/games/archives

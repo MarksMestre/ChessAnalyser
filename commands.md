@@ -17,7 +17,7 @@ All examples assume Windows PowerShell from the project root (`C:\Projs\ChessAna
 | [Fetch incrementally](#4-process_apicli--incremental-fetch) | `python -m process_api.cli` | re-runnable, skips what it has |
 | [Analyse](#5-analyzepy--analyse-games) | `analyze.py` | the engine run |
 | [Re-render](#6-reportpy--re-render-the-report) | `report.py` | rebuild HTML without re-analysing |
-| [Tests](#7-tests) | `unittest` | offline test suite |
+| [Verifying](#7-verifying-a-change) | `--self-test` | check a change without a test suite |
 | [Recipes](#8-recipes) | — | common end-to-end jobs |
 | [Environment variables](#9-environment-variables) | — | override engine paths |
 | [Exit codes](#10-exit-codes) | — | scripting and CI |
@@ -164,7 +164,17 @@ not — `setup.py` warns when it detects a known different build being replaced.
       net t3-512x15x16h.pb.gz (146.0 MB)
       backends onnx-dml, onnx-cpu, onnx-cuda, onnx-trt
     opening book: 3,865 entries
+    stockfish: {'binary': 'engines\\stockfish\\stockfish-windows-x86-64-universal.exe'}
+    lc0: {'binary': 'engines\\lc0-gpu\\lc0.exe', 'build': 'onnx-dml', 'tag': 'v0.32.1', ...}
+    net: t3-512x15x16h.pb.gz
+==> self-tests
+player: 43/43 checks passed
+fetcher: 23/23 checks passed
 ```
+
+The last step runs the two in-module self-tests described in
+[Verifying a change](#7-verifying-a-change), so one command covers both the
+install and the logic.
 
 Exit code 0 means everything is usable, 1 means something is missing or broken.
 
@@ -177,29 +187,28 @@ it in `player.txt` in the project root and pass `me`.
 
 ### Creating `player.txt`
 
-It does not exist on a fresh clone (it is git-ignored, because a username is
-personal). Create it once:
+`player.txt` is git-ignored, because a username is personal. The template is
+tracked, so a fresh clone has it. Copy it once and fill in your own names:
+
+```powershell
+copy player_example.txt player.txt
+```
 
 ```
-# username(s) behind `--player me`. Git-ignored because it is personal.
-#
-#   python fetch_games.py --player me --site chesscom
-#   python analyze.py     --player me --out out
-#
-# Format: `site=name` picks the name for that site only; a bare `name` line is
-# the fallback for any site without its own entry. `#` starts a comment.
+# player.txt
+chesscom=CHESS.COM USERNAME
+lichess=LICHESS USERNAME
+```
+
+If you only play on one platform, delete the other line — or use a single bare
+line, which applies to every site:
+
+```
 chesscom=yourname
-lichess=yourname
-```
-
-If you only play on one platform, a single bare line is enough:
-
-```
-yourname
 ```
 
 Site names are forgiving — `chess.com`, `chess-com` and `chess_com` all mean
-`chesscom`.
+`chesscom`. `#` starts a comment.
 
 ### Resolution order
 
@@ -305,10 +314,10 @@ python -m process_api.cli --player me
 
 ### How the skip rule works
 
-`data/metadata.json` records every month already fetched. A month is skipped when
-it is both recorded *and* outside the current calendar month — Chess.com keeps
-adding games to the open month for all of it, so that one is re-checked on every
-run while closed months cost nothing.
+`process_api\data\metadata.json` records every month already fetched. A month is
+skipped when it is both recorded *and* outside the current calendar month — Chess.com
+keeps adding games to the open month for all of it, so that one is re-checked on
+every run while closed months cost nothing.
 
 In practice a steady-state run is **one request** plus the open month, whatever
 the size of your archive.
@@ -317,11 +326,16 @@ Games land one file per game under `process_api\data\pgn\<YYYY-MM>\<uuid>.pgn`,
 deduplicated by uuid, so re-running cannot duplicate a game and an interrupted
 run cannot lose one.
 
+Everything it writes lives under `process_api\data\`, which is git-ignored — the
+scripts are tracked, the data is rebuilt by this command. No configuration file
+is required: `--player me` resolves the username. `api.txt` is an optional
+alternative way to name the account; see `process_api\api_example.txt`.
+
 ### Flags
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--player NAME` | `me` | username; overrides the URL in `api.txt` |
+| `--player NAME` | `me` | username on Chess.com |
 | `--dry-run` | off | print the skip/fetch decision per month and exit. Makes one request |
 | `--force` | off | ignore the skip rule, re-fetch everything |
 | `--month YYYY-MM` | none | restrict to one archive |
@@ -386,14 +400,6 @@ python -m process_api.cli --reset --delete-pgn
 # Force a full re-download
 python -m process_api.cli --force
 ```
-
-### Tests
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s process_api -t .
-```
-
-No network required.
 
 ### Known bug
 
@@ -596,21 +602,54 @@ Note this takes no `--player`: the player is already recorded in `data.json`.
 
 ---
 
-## 7. Tests
+## 7. Verifying a change
+
+The repo ships no test files — `.gitignore` keeps new ones out. Instead, the pure
+logic is checked by the modules that own it, via a `--self-test` flag. Because
+those checks live next to the rules they describe, they cannot drift away from
+the code the way a separate file can.
+
+### The self-tests
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s process_api -t .
+python setup.py --verify            # runs both, as its last step
+
+python player.py --self-test        # 43 checks: the `--player me` alias
+python -m process_api.fetcher --self-test   # 23 checks: the archive skip rule
 ```
 
-Runs offline, no network. Expected: `Ran 103 tests` / `OK`.
+Both are offline and take under a second. Neither writes outside a temp directory,
+and neither touches your real `player.txt`, `metadata.json` or `out\`.
+
+| Module | What it pins down |
+|---|---|
+| `player.py` | resolution order (`$CHESS_COACH_PLAYER` over `player.txt`), per-site vs bare-line precedence, `chess.com`/`chess-com` normalisation, `me` never resolving to itself, explicit names passing through, `resolve_or_exit` exiting 2 with usable guidance, `player_example.txt` parsing |
+| `process_api/fetcher.py` | `archive_month` parsing, the skip predicate across the month boundary, `plan_archives` under `force` / `only_month` / `limit` and oldest-first ordering, `reset` |
+
+Exit 0 means every check passed. Failures print `FAIL <label>: got …, want …`.
+
+### Then the real pipeline
+
+The self-tests cover the decisions; they cannot tell you the engines work. For
+that, run the pipeline:
 
 ```powershell
-# Just one file
-.\.venv\Scripts\python.exe -m unittest process_api.tests.test_player -v
+# 1. Does one known game analyse correctly?  ~1-4 min, no network.
+#    Morphy vs Brunswick & Isouard 1858: both real sacrifices must be found.
+python analyze.py --player Morphy --pgn games\opera.pgn --out out_test
 
-# Verbose
-.\.venv\Scripts\python.exe -m unittest discover -s process_api -t . -v
+# 2. Does a real archive fetch?  ~1 min, one request per month.
+python fetch_games.py --player me --site chesscom --max 5 --out games\check.pgn
+
+# 3. Does a real archive analyse?  Minutes, scales with --limit.
+python analyze.py --player me --pgn games\check.pgn --out out_check
 ```
+
+Step 1 is the one worth running after any change that touches labels, evals or the
+report. `games\opera.pgn` has a known-correct answer, so it catches a broken
+engine, a wrong default, or a bad report without needing your own games or any
+network access. Expect `13.Rxd7` and `16.Qb8+` labelled `Brilliant`, and nothing
+spurious.
 
 ---
 
@@ -790,6 +829,24 @@ python analyze.py --player Morphy --pgn games\opera.pgn --out out_test
 # Re-render
 python report.py --data out\data.json --out out\report.html
 
-# Tests
-.\.venv\Scripts\python.exe -m unittest discover -s process_api -t .
+# Verify a change (no test files; --self-test lives in the modules)
+python setup.py --verify                              # includes both self-tests
+python player.py --self-test
+python -m process_api.fetcher --self-test
+python analyze.py --player Morphy --pgn games\opera.pgn --out out_test
 ```
+
+---
+
+## First run on a new clone
+
+```powershell
+copy player_example.txt player.txt      # then edit in your usernames
+python setup.py
+python fetch_games.py --player me --site chesscom
+python analyze.py     --player me --out out --limit 10
+```
+
+`player.txt` and `process_api\api.txt` are the only two files you create by hand;
+both come from a tracked `*_example.txt` template. Everything else in the tree is
+either source or something a command regenerates.

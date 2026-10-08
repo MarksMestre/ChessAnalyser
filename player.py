@@ -27,12 +27,19 @@ configured site.  That keeps ``--player me`` working whichever shape you write.
 
 This module deliberately knows nothing about ``process_api``: that sub-project is
 git-ignored as a whole, so anything shipped here must not import from it.
+
+The resolution rules are the fiddly part of every entry point, so they are
+checked here rather than in a separate test file -- ``python player.py
+--self-test`` runs them offline, and ``setup.py --verify`` calls it.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
+import tempfile
 from typing import Dict, Optional, Tuple
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -153,3 +160,170 @@ def resolve_or_exit(value: Optional[str] = None, site: Optional[str] = None, pro
     print("or skip the alias and name the player directly:", file=sys.stderr)
     print(f"  {prog}--player yourname", file=sys.stderr)
     raise SystemExit(2)
+
+
+# --------------------------------------------------------------------------
+# self-test
+# --------------------------------------------------------------------------
+
+def self_test() -> int:
+    """Check the resolution rules against a temp player.txt. No network, no writes.
+
+    Lives here rather than in a tests/ directory because the repo keeps no test
+    files: these checks describe the contract of the module above them, so they
+    cannot drift away from it the way a separate file can.
+    """
+    global PLAYER_TXT
+    checks = 0
+    failures = []
+
+    def check(label: str, got, want) -> None:
+        nonlocal checks
+        checks += 1
+        if got != want:
+            failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    original_txt = PLAYER_TXT
+    original_env = os.environ.pop(ENV_VAR, None)
+
+    class config:
+        """resolve() against a throwaway player.txt, then put the real one back.
+
+        ``text=None`` means no file at all, which is a case worth testing: an
+        unconfigured machine must get None rather than a traceback.
+        """
+
+        def __init__(self, text, env=None):
+            self.text = text
+            self.env = env
+
+        def __enter__(self):
+            global PLAYER_TXT
+            self._tmp = tempfile.TemporaryDirectory()
+            PLAYER_TXT = os.path.join(self._tmp.name, "player.txt")
+            if self.text is not None:
+                with open(PLAYER_TXT, "w", encoding="utf-8") as fh:
+                    fh.write(self.text)
+            os.environ.pop(ENV_VAR, None)
+            if self.env is not None:
+                os.environ[ENV_VAR] = self.env
+            return self
+
+        def __exit__(self, *exc_info):
+            global PLAYER_TXT
+            PLAYER_TXT = original_txt
+            os.environ.pop(ENV_VAR, None)
+            if original_env is not None:
+                os.environ[ENV_VAR] = original_env
+            self._tmp.cleanup()
+            return False
+
+    # -- an explicit name is never looked up ------------------------------
+    with config("chesscom=fromfile\n"):
+        check("explicit name passes through", resolve("realname"), "realname")
+        check("explicit name passes through for any site", resolve("realname", "lichess"), "realname")
+        check("explicit name is stripped", resolve(" realname "), "realname")
+
+    # -- the alias, with no usable config ---------------------------------
+    with config(None):
+        check("missing file is not an error", resolve(ME), None)
+        check("empty argument looks up too", resolve(None), None)
+        check("empty string looks up too", resolve(""), None)
+    with config("# only a comment\n"):
+        check("comment-only file is not an error", resolve(ME), None)
+
+    # -- per-site vs bare line -------------------------------------------
+    both = "chesscom=cc\nlichess=lc\n"
+    with config(both):
+        check("per-site chesscom", resolve(ME, "chesscom"), "cc")
+        check("per-site lichess", resolve(ME, "lichess"), "lc")
+        check("no site falls back to the first configured", resolve(ME), "cc")
+    with config("lichess=lc\ncc2\n"):
+        check("bare line wins when no site asked", resolve(ME), "cc2")
+        check("bare line answers an unlisted site", resolve(ME, "chesscom"), "cc2")
+        check("per-site entry still wins for its own site", resolve(ME, "lichess"), "lc")
+    with config("chesscom=cc\nbogus=nope\n"):
+        check("unknown site key is ignored, default used", resolve(ME, "lichess"), "cc")
+
+    # -- site spelling is forgiving --------------------------------------
+    for key in ("chesscom", "chess.com", "ChessCom", "chess-com", "chess_com"):
+        with config(f"{key}=cc\n"):
+            check(f"site key {key!r} normalises", resolve(ME, "chesscom"), "cc")
+
+    # -- comments, blanks, and refusing to point at itself ----------------
+    with config("\n# cc\n   \nchesscom=cc  # trailing\n"):
+        check("comments and blanks are ignored", resolve(ME), "cc")
+    with config("chesscom=me\n"):
+        check("a name of me does not point at itself", resolve(ME), None)
+        check("a name of ME does not point at itself", resolve("ME"), None)
+
+    # -- precedence: env over file ---------------------------------------
+    with config("chesscom=fromfile\n", env="fromenv"):
+        check("env beats the file", resolve(ME), "fromenv")
+    with config("chesscom=fromfile\n", env="chesscom=fromenv"):
+        check("env accepts a site key", resolve(ME, "chesscom"), "fromenv")
+        check("env site key beats the file's other site", resolve(ME, "lichess"), "fromenv")
+
+    # -- the alias itself -------------------------------------------------
+    for value in ("me", "ME", " Me ", "\tme\n", None, "", "   "):
+        check(f"is_me({value!r})", is_me(value), True)
+    for value in ("yourname", "memoir", "me_"):
+        check(f"is_me({value!r})", is_me(value), False)
+
+    # -- resolve_or_exit: the two outcomes --------------------------------
+    with config("chesscom=cc\n"):
+        check("resolve_or_exit returns a configured name", resolve_or_exit(ME, "chesscom"), "cc")
+    with config("chesscom=cc\n"):
+        check("resolve_or_exit passes an explicit name through", resolve_or_exit("realname"), "realname")
+    with config(None):
+        try:
+            # The guidance goes to stderr and would otherwise be the only thing
+            # printed by a passing run, so it is captured and checked instead.
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                resolve_or_exit(ME, "chesscom", prog="fetch_games.py ")
+            check("resolve_or_exit exits when unresolved", "returned", "SystemExit")
+        except SystemExit as exc:
+            check("resolve_or_exit exits 2", exc.code, 2)
+            note = err.getvalue()
+            check("resolve_or_exit names the env var", ENV_VAR in note, True)
+            check("resolve_or_exit names player.txt", "player.txt" in note, True)
+            check("resolve_or_exit shows how to pass a name", "--player yourname" in note, True)
+
+    # -- the template a fresh clone actually ships ------------------------
+    # A placeholder must resolve to itself: if it ever resolved to nothing, the
+    # first run of a fresh clone would fail with no obvious cause.
+    template = os.path.join(ROOT, "player_example.txt")
+    if os.path.isfile(template):
+        with open(template, "r", encoding="utf-8") as fh:
+            shipped = fh.read()
+        with config(shipped):
+            check("player_example.txt resolves", bool(resolve(ME, "chesscom")), True)
+            check(
+                "player_example.txt holds no real username",
+                any(
+                    part.lower() not in ("chesscom", "lichess")
+                    for line in shipped.splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                    for part in [line.split("=", 1)[-1].strip()]
+                ),
+                True,
+            )
+
+    print(f"player: {checks - len(failures)}/{checks} checks passed")
+    for problem in failures:
+        print(f"  FAIL {problem}", file=sys.stderr)
+    return 1 if failures else 0
+
+
+def main(argv=None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--self-test" in argv:
+        return self_test()
+    print("usage: python player.py --self-test")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
