@@ -68,6 +68,27 @@ def label_glyph(label: str) -> str:
 BOOK_MAX_LOSS = 10.0      # above this, "book move" is not an excuse
 BRILLIANT_MIN_MATERIAL = 1.5   # pawns of material given up, after best defence
 BRILLIANT_MAX_LOSS = 2.0
+#: Brilliant needs the position to still be live.
+#:
+#: Without this floor the `loss <= BRILLIANT_MAX_LOSS` test is vacuous in a lost
+#: position. ``loss_pp`` is measured against ``win_percent_before``, so at 10%
+#: winning *every* move costs at most ~10 points -- which meant a queen
+#: sacrifice in a hopeless game was labelled brilliant. That is not a rare
+#: edge case either: it is what happened to 16...Qe7 in a real report, where
+#: the player was six pawns down and the move made the evaluation worse.
+#:
+#: A floor and not a ceiling, deliberately. A ceiling ("you must not already be
+#: winning") would discard the classic brilliancies -- Morphy's 13.Rxd7 and
+#: 16.Qb8+ are both played from a position he was already winning -- which is
+#: the mistake this rule originally avoided and must keep avoiding.
+BRILLIANT_MIN_WIN_BEFORE = 30.0
+#: ...and the move has to leave the position acceptable.
+#:
+#: This is the "the sacrifice worked" test: after handing the material over, and
+#: against the opponent's *best* reply, you are still at least equal. Measured in
+#: the mover's frame, so it means the same thing for White and Black. Without it
+#: nothing required the sacrifice to achieve anything at all.
+BRILLIANT_MIN_WIN_AFTER = 50.0
 GREAT_MIN_GAP = 10.0      # E1 - E2, i.e. "there was literally nothing else"
 MISS_MIN_WIN_BEFORE = 85.0
 
@@ -133,16 +154,27 @@ def classify_data(d: LabelInput) -> str:
 
     # 1. Brilliant: a sound sacrifice.
     #
-    # "Sound" means the position after the opponent's best reply is not
-    # materially worse for the player -- which is exactly what loss_pp measures.
+    # "Sound" means real material was handed over (BRILLIANT_MIN_MATERIAL,
+    # measured against the opponent's *best* reply), it cost almost nothing
+    # (BRILLIANT_MAX_LOSS), the position was worth winning in
+    # (BRILLIANT_MIN_WIN_BEFORE), and the move leaves it acceptable
+    # (BRILLIANT_MIN_WIN_AFTER).
+    #
     # Note there is deliberately *no* "you were not already winning" gate: the
     # classic brilliancies (Morphy's 16.Qb8+ in the Opera Game) are played from
-    # a winning position, and gating on winProb would throw them away.  What
-    # separates a brilliant from an ordinary good move is that material was
+    # a winning position, and gating on winProb from above would throw them away.
+    # What separates a brilliant from an ordinary good move is that material was
     # handed over for a reason, not that the player was losing.
+    #
+    # The two win-percent floors are what stop a lost position from producing
+    # brilliant labels by default. See the comments on the constants: without
+    # them `loss <= 2.0` passes for nearly any move once you are already losing,
+    # because there is little winning probability left to lose.
     if (
         (d.sacrifice or 0.0) >= BRILLIANT_MIN_MATERIAL
         and loss <= BRILLIANT_MAX_LOSS
+        and d.win_percent_before >= BRILLIANT_MIN_WIN_BEFORE
+        and d.win_percent_after >= BRILLIANT_MIN_WIN_AFTER
         and not d.in_book
         and not d.forced
     ):

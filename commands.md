@@ -17,6 +17,7 @@ All examples assume Windows PowerShell from the project root (`C:\Projs\ChessAna
 | [Fetch incrementally](#4-process_apicli--incremental-fetch) | `python -m process_api.cli` | re-runnable, skips what it has |
 | [Analyse](#5-analyzepy--analyse-games) | `analyze.py` | the engine run |
 | [Re-render](#6-reportpy--re-render-the-report) | `report.py` | rebuild HTML without re-analysing |
+| [Serve](#6b-servepy--serve-the-react-app) | `serve.py` | the interactive frontend + a live engine |
 | [Verifying](#7-verifying-a-change) | `--self-test` | check a change without a test suite |
 | [Recipes](#8-recipes) | — | common end-to-end jobs |
 | [Environment variables](#9-environment-variables) | — | override engine paths |
@@ -584,6 +585,46 @@ python report.py --data out\data.json --out out\report.html
 |---|---|---|
 | `--data PATH` | `out\data.json` | input data written by `analyze.py` |
 | `--out PATH` | `out\report.html` | output HTML |
+| `--pack` | off | write the report *pack* for the React app instead of one file |
+| `--standalone` | off | build the React app and fold it, with the data, into one self-contained HTML file that opens from `file://` |
+| `--pack-dir PATH` | `out\pack` | where the standalone build keeps its pack |
+| `--embed-games N` | `0` | how many games carry their move data into the output |
+
+### Three kinds of output
+
+The default is unchanged, so none of this is required:
+
+```
+python report.py                                     the original one-file report
+python report.py --pack --out out\pack               data split for the React app
+python report.py --standalone --out out\report.html  React, self-contained
+```
+
+**`--pack` exists because of size.** `data.json` is ~70 KB *per game* — measured
+at 349 KB for five games — so a 3089-game archive is ~216 MB, which no browser
+opens happily. The pack keeps a light index in `report.json` and writes one file
+per game, fetched when that game is opened. Against those same five games the
+index is 10% of `data.json`.
+
+**`--standalone` keeps the offline guarantee.** It runs `npm install` and
+`npm run build`, then inlines the bundle, the stylesheet, the piece artwork and
+the data into one HTML file. The app detects a `file://` origin and switches to
+hash routing, because the History API does not work there. The result opens with
+no console errors and no network, exactly as the original report does.
+
+### `--embed-games` and the size ceiling
+
+A game is ~70 KB, so there is a ceiling on how much fits in one file. Past it the
+game is listed in the index but its moves are not embedded, and the UI **says
+so** rather than showing an empty page:
+
+```
+python report.py --standalone --embed-games 50     # ~3.5 MB
+python report.py --standalone --embed-games 200    # ~14 MB, opens slowly
+```
+
+For the whole archive use `python serve.py`, which loads each game on demand and
+has no ceiling.
 
 ### Examples
 
@@ -596,9 +637,102 @@ python report.py --data out_deep\data.json --out out_deep\report.html
 
 # Render into a different folder
 python report.py --data out\data.json --out review\report.html
+
+# Split the data for the interactive app (run once per analysis)
+python report.py --pack --out out\pack
+
+# One self-contained file with the React app in it
+python report.py --standalone --embed-games 50
 ```
 
 Note this takes no `--player`: the player is already recorded in `data.json`.
+
+---
+
+## 6b. `serve.py` — serve the React app
+
+```
+python report.py --pack --out out\pack     # once, to split the data
+python serve.py                            # http://127.0.0.1:8000/report.html/
+```
+
+The interactive frontend: it serves the built app, the report pack, and a live
+Stockfish endpoint that judges the moves you make on the board.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--port N` | `8000` | port to listen on |
+| `--host ADDR` | `127.0.0.1` | bind address. **Localhost only** — this server has no authentication and must not be exposed |
+| `--pack PATH` | `out\pack` | directory holding `report.json` and `games/` |
+| `--dev` | off | run Vite's dev server instead of serving `dist/` |
+| `--build` | off | `npm install` + `npm run build`, then exit |
+| `--movetime S` | `0.3` | default search time per position |
+| `--depth N` | `12` | default search depth |
+
+### URLs
+
+```
+/report.html/                 overview: rating, accuracy, weaknesses, brilliancies
+/report.html/games            every game, filterable
+/report.html/games/3          one game: board, move list, engine commentary
+/report.html/games/3/14       ...at a specific move
+/report.html/games/3/play     fork any position and play on from it, both sides
+                              (games/3 itself is also playable: play a move the game
+                              played to advance, any other to open a variation)
+/report.html/games/3/drill    practise the moves you got wrong
+/report.html/export           the annotated PGN and the settings used
+```
+
+### The API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | which engines are reachable, and at what limits |
+| `GET /api/report` | the pack index: dashboard, ratings, every game without its moves |
+| `GET /api/games/<n>` | one game's full move list |
+| `POST /api/analyse` | `{fen, uci, depth?, movetime?}` → label, evaluation and engine line for a move you played |
+| `POST /api/hints` | `{fen, multipv: 1..3, depth?, movetime?}` → the best moves for a position, for the grey arrows on the free-play board |
+
+Three things worth knowing:
+
+**One engine, behind a lock.** `chess.engine.SimpleEngine` is not thread-safe, so
+the server opens a single Stockfish and serialises every search on a lock.
+Requests queue — sub-second at the interactive defaults, which is the intended
+use. The fix for many users is a *pool* of engines, not removing the lock.
+
+**Live moves are labelled by the batch rules.** `POST /api/analyse` calls the same
+`scoring.py` that `analyze.py` uses, so a move you play by hand is judged by the
+thresholds in `labels.py` rather than by a second implementation that could
+drift away from them.
+
+**`/api/hints` is deliberately not a flag on `/api/analyse`.** Analysing a played
+move needs the position before *and* after it — two searches. Hints need one, and
+the page asks for them at every position you pass through, so the search count is
+the whole cost of the feature. `multipv` above 3 is rejected rather than clamped:
+the UI offers 1–3, so a larger value is a caller bug worth surfacing.
+
+### Examples
+
+```powershell
+# The normal way to read a report
+python serve.py
+
+# A different port
+python serve.py --port 9000
+
+# Frontend development, with the API proxied to a second serve.py
+cd ui; npm run dev
+
+# Just build the frontend
+python serve.py --build
+
+# A deeper search for moves you play live, at the cost of waiting
+python serve.py --depth 18 --movetime 1.0
+```
+
+`serve.py` takes no `--player` either: the player is already in `data.json`.
 
 ---
 
@@ -612,19 +746,27 @@ the code the way a separate file can.
 ### The self-tests
 
 ```powershell
-python setup.py --verify            # runs both, as its last step
+python setup.py --verify            # runs them all, as its last step
 
 python player.py --self-test        # 43 checks: the `--player me` alias
 python -m process_api.fetcher --self-test   # 23 checks: the archive skip rule
+python analyze.py --self-test       # 54 checks: ELO extraction, shared scoring
+python pack.py                      # 14 checks: the report-pack split
+python serve.py --self-test         # 31 checks: routing, the SPA fallback
+cd ui; npm test                     # 46 checks: commentary, formatting, rules
 ```
 
-Both are offline and take under a second. Neither writes outside a temp directory,
-and neither touches your real `player.txt`, `metadata.json` or `out\`.
+All are offline and take under a second each. None writes outside a temp
+directory, and none touches your real `player.txt`, `metadata.json` or `out\`.
 
 | Module | What it pins down |
 |---|---|
 | `player.py` | resolution order (`$CHESS_COACH_PLAYER` over `player.txt`), per-site vs bare-line precedence, `chess.com`/`chess-com` normalisation, `me` never resolving to itself, explicit names passing through, `resolve_or_exit` exiting 2 with usable guidance, `player_example.txt` parsing |
 | `process_api/fetcher.py` | `archive_month` parsing, the skip predicate across the month boundary, `plan_archives` under `force` / `only_month` / `limit` and oldest-first ordering, `reset` |
+| `analyze.py` | ELO tags (missing, blank, zero, float, junk), PGN date forms, opponent-strength bands, unrated games skipped rather than counted as zero, and that the shared `scoring.py` labels a move exactly as the batch run does |
+| `pack.py` | that the index really is smaller, keeps what the Overview draws, and drops `moves[]` |
+| `serve.py` | the `/report.html` mount prefix, the SPA history fallback (`/games/3` must not 404), `/api/*` never swallowed by it, request clamping, and the mate/draw results |
+| `ui/src/lib/*.test.ts` | the commentary generator is deterministic, mate scores render as mates not pawn values, and the playable board's rules — castling through an attacked square, en passant that would expose the king, all four promotions |
 
 Exit 0 means every check passed. Failures print `FAIL <label>: got …, want …`.
 
@@ -828,11 +970,21 @@ python analyze.py --player Morphy --pgn games\opera.pgn --out out_test
 
 # Re-render
 python report.py --data out\data.json --out out\report.html
+python report.py --pack --out out\pack              # split for the React app
+python report.py --standalone --embed-games 50     # React, one offline file
+
+# Serve the interactive app
+python serve.py                                      # /report.html/
+python serve.py --dev                                # Vite dev server
+python serve.py --build                              # just build the frontend
 
 # Verify a change (no test files; --self-test lives in the modules)
-python setup.py --verify                              # includes both self-tests
+python setup.py --verify                              # includes all of them
 python player.py --self-test
 python -m process_api.fetcher --self-test
+python analyze.py --self-test
+python pack.py
+python serve.py --self-test
 python analyze.py --player Morphy --pgn games\opera.pgn --out out_test
 ```
 

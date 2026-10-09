@@ -1,0 +1,192 @@
+.page {
+  padding: var(--sp-4) var(--sp-5) var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  --board-size: clamp(300px, min(40vw, 56vh), 560px);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.header h1 {
+  font-size: 18px;
+}
+
+.sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.headerRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.back {
+  font-size: 12.5px;
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.progressRow > :first-child {
+  flex: 1 1 auto;
+}
+
+.tally {
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.right {
+  color: var(--win);
+  font-weight: 650;
+}
+.wrong {
+  color: var(--loss);
+  font-weight: 650;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: var(--board-size) minmax(320px, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 940px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.boardColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: var(--board-size);
+  max-width: 100%;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.sideBody {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  animation: fade var(--t-base) var(--ease);
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.prompt {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  /* A capped height with scroll, because a position can have 40 legal moves and
+     they all have to be offered — the whole point is a real choice. */
+  max-height: 190px;
+  overflow-y: auto;
+  padding: var(--sp-2);
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+
+.choice {
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.choice:hover {
+  background: var(--panel-3);
+  transform: translateY(-1px);
+}
+
+.choicePicked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choiceRight {
+  border-color: var(--win);
+  background: #14332f;
+  color: #6fd3c0;
+}
+
+.choiceWrong {
+  border-color: var(--loss);
+  background: #331619;
+  color: #f0a0a0;
+}
+
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+
+.verdict p {
+  margin: 0;
+}
+
+.good {
+  color: var(--win);
+  font-weight: 600;
+}
+
+.bad {
+  color: var(--loss);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+}

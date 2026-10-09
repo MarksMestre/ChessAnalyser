@@ -38,8 +38,10 @@ import chess
 import chess.pgn
 
 import engines
+import labels
 import openings
 import player
+import scoring
 from engines import accuracy_from_loss, win_percent
 from labels import LABEL_ORDER, Label, classify, label_glyph
 
@@ -485,30 +487,24 @@ class Analyser:
         for i, rec in enumerate(records):
             before, after = lines[i], lines[i + 1]
 
-            # the pv lines are scored from the side to move; flip the "after" one
-            eval_before = before[0].score_cp if before else 0.0
-            eval_after = -after[0].score_cp if after else -eval_before
-
-            rec.eval_before = eval_before
-            rec.eval_after = eval_after
-            rec.win_percent_before = win_percent(eval_before)
-            rec.win_percent_after = win_percent(eval_after)
-            rec.loss_pp = max(0.0, rec.win_percent_before - rec.win_percent_after)
-            rec.accuracy = round(accuracy_from_loss(rec.loss_pp), 2)
-
-            if before:
-                best = before[0]
-                rec.best_uci, rec.best_san = best.uci, best.san
-                rec.best_pv = san_pv(boards[i], best.pv)
-                rec.best_eval = best.score_cp
-                rec.depth = best.depth or self.depth
-            if len(before) > 1:
-                second = before[1]
-                rec.second_uci, rec.second_san = second.uci, second.san
-                rec.second_eval = second.score_cp
-                rec.gap_pp = round(
-                    win_percent(rec.best_eval or 0.0) - win_percent(second.score_cp), 2
-                )
+            # Scoring and labelling live in scoring.py so the frontend server
+            # rates a move played on the board exactly the way this does.
+            score = scoring.score_move(
+                boards[i], rec.uci, before=before, after=after, depth=self.depth
+            )
+            rec.eval_before = score.eval_before
+            rec.eval_after = score.eval_after
+            rec.win_percent_before = score.win_percent_before
+            rec.win_percent_after = score.win_percent_after
+            rec.loss_pp = score.loss_pp
+            rec.accuracy = score.accuracy
+            rec.best_uci, rec.best_san = score.best_uci, score.best_san
+            rec.best_pv = score.best_pv
+            rec.best_eval = score.best_eval
+            rec.depth = score.best_depth
+            rec.second_uci, rec.second_san = score.second_uci, score.second_san
+            rec.second_eval = score.second_eval
+            rec.gap_pp = score.gap_pp
 
             if not rec.is_players_turn:
                 rec.label, rec.glyph = Label.BEST, ""
@@ -520,10 +516,14 @@ class Analyser:
             if given >= 1.0:
                 rec.sacrifice = round(given, 2)
 
-            rec.label = classify(
-                rec, in_book=rec.in_book, forced=is_forced_move(boards[i])
+            rec.label = scoring.label_move(
+                score,
+                uci=rec.uci,
+                in_book=rec.in_book,
+                forced=is_forced_move(boards[i]),
+                sacrifice=rec.sacrifice,
             )
-            rec.glyph = label_glyph(rec.label)
+            rec.glyph = score.glyph
 
     # ------------------------------------------------------------------
     def _deep_verify(
@@ -703,6 +703,116 @@ def resolve_player_color(headers: Dict[str, str], player: str) -> Optional[chess
     return None
 
 
+# --------------------------------------------------------------------------
+# who the player is, per site
+# --------------------------------------------------------------------------
+
+#: How each platform's ``Site`` header is shown in the report. Keyed by the
+#: substring to look for, because neither platform is consistent about the rest
+#: of the header: Chess.com writes "Chess.com", lichess writes "LICHESS.ORG", and
+#: older archives carry "https://www.lichess.org/".
+SITE_LABELS: Tuple[Tuple[str, str], ...] = (
+    ("chess.com", "Chess.com"),
+    ("chesscom", "Chess.com"),
+    ("lichess", "LICHESS.ORG"),
+)
+
+#: The order those two appear in the report header, and the display name for
+#: anything else. A fixed order because a line that reorders itself between runs
+#: is harder to read than one that is merely incomplete.
+SITE_ORDER: Tuple[str, ...] = ("Chess.com", "LICHESS.ORG")
+
+
+def site_label(raw: str) -> str:
+    """``https://www.lichess.org/`` -> ``LICHESS.ORG``. Unrecognised passes through.
+
+    Truncated rather than dropped: an unknown site still identifies where the
+    games came from, and inventing a name for it would be worse than showing a
+    long one.
+    """
+    text = (raw or "").strip()
+    low = text.lower()
+    for needle, label in SITE_LABELS:
+        if needle in low:
+            return label
+    return text[:32] or "Unknown"
+
+
+def build_identities(results: List[GameResult], player_name: str = "",
+                     *, via_alias: bool = True) -> List[Dict]:
+    """One entry per platform account the player has, with a game count.
+
+    A single name cannot answer "which account is this?", and ``--player me``
+    genuinely has several: ``player.txt`` holds one per site. So the report needs
+    per-site identities, and there are two sources to combine:
+
+    * the games actually analysed -- their ``Site`` header says where each came
+      from, and the header name of the side that was the player is the spelling
+      the platform itself uses (Chess.com upper-cases handles, so ``MARK8HS`` is
+      the honest rendering rather than the lowercase alias);
+    * ``player.txt``, for a configured site with no games in this run. Without it
+      a Chess.com-only report would silently omit the lichess account, which reads
+      as "you do not have one" rather than "this report is only Chess.com".
+
+    ``via_alias`` gates the second source, and it matters. ``player.txt`` describes
+    the person running the command, so it is only consulted when the player
+    *asked* for themselves with ``me``; with an explicit ``--player Morphy`` the
+    analysed name is somebody else entirely, and listing the operator's own
+    accounts next to their games would be inventing data.
+
+    Pure function of *results* (given ``via_alias``), so it can be asserted in
+    ``--self-test`` without an engine or a PGN.
+    """
+    found: Dict[str, Dict] = {}
+    for r in results:
+        if not r.moves or r.player_color is None:
+            continue
+        site = site_label(r.headers.get("Site", ""))
+        # The player's own header name, not `player_name`: it is what the
+        # platform shows and how it capitalises it.
+        side = "White" if r.player_color is True else "Black"
+        name = (r.headers.get(side) or "").strip()
+        entry = found.setdefault(
+            site, {"site": site, "name": name, "games": 0, "player_color": None}
+        )
+        entry["games"] += 1
+        if not entry["name"]:
+            entry["name"] = name
+        if entry["player_color"] is None:
+            entry["player_color"] = "white" if r.player_color is True else "black"
+
+    # Configured but unused. `player.py` is asked per site, so a `me` alias picks
+    # up the right name for each one rather than whichever came first.
+    if via_alias:
+        for key, label in (("chesscom", "Chess.com"), ("lichess", "LICHESS.ORG")):
+            try:
+                configured = player.resolve(player.ME, key)
+            except Exception:
+                configured = None
+            if configured and label not in found:
+                found[label] = {
+                    "site": label,
+                    "name": configured,
+                    "games": 0,
+                    "player_color": None,
+                }
+
+    if player_name and not found:
+        # No site anywhere to attribute the name to. Still better than nothing,
+        # and the UI renders it with whatever label we have.
+        found["Unknown"] = {
+            "site": "Unknown",
+            "name": player_name,
+            "games": 0,
+            "player_color": None,
+        }
+
+    def sort_key(item: str) -> Tuple[int, str]:
+        return (SITE_ORDER.index(item) if item in SITE_ORDER else len(SITE_ORDER), item)
+
+    return [found[key] for key in sorted(found, key=sort_key)]
+
+
 def player_result(result: str, color: Optional[chess.Color]) -> str:
     if result == "1-0":
         return "win" if color is True else "loss"
@@ -726,6 +836,593 @@ def game_title(headers: Dict[str, str]) -> str:
     if white and black:
         base = f"{base} - {white} vs {black}"
     return base
+
+
+# --------------------------------------------------------------------------
+# ratings
+# --------------------------------------------------------------------------
+
+def header_elo(headers: Dict[str, str], color: Optional[chess.Color]) -> Optional[int]:
+    """The ELO tag for one side, or None when the game was unrated.
+
+    PGN headers spell this several ways, and platforms omit it entirely for
+    unrated games -- which is common enough that treating a missing tag as 0
+    would draw a spike to the floor of the chart.
+    """
+    # No cross-colour fallback: asking for Black's rating on a game with no
+    # BlackElo tag must be "unrated", not White's number wearing the wrong hat.
+    key = {chess.WHITE: "WhiteElo", chess.BLACK: "BlackElo"}.get(color)
+    for key in ([key] if key else ["WhiteElo", "BlackElo"]):
+        raw = (headers.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            value = int(float(raw))
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def game_date(headers: Dict[str, str]) -> str:
+    """An ISO date for the game, or "" when the header is unusable.
+
+    PGN dates are "2021.03.31"; lichess adds "2021.03.31 18:16:29".  Falls back
+    to UTCDate, which is the same value in ISO order.
+    """
+    for key in ("UTCDate", "Date"):
+        raw = (headers.get(key) or "").strip().replace("-", ".")
+        head = raw.split(" ")[0]
+        parts = head.split(".")
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            return f"{parts[0]}-{parts[1]}-{parts[2]}"
+    return ""
+
+
+# Fixed bands so the opponent-strength axis does not rescale as data arrives.
+RATING_BANDS = ("<400", "400-800", "800-1200", "1200-1600", "1600+")
+
+
+def _band_for(elo: Optional[int]) -> Optional[str]:
+    if elo is None or elo <= 0:
+        return None
+    if elo < 400:
+        return RATING_BANDS[0]
+    if elo < 800:
+        return RATING_BANDS[1]
+    if elo < 1200:
+        return RATING_BANDS[2]
+    if elo < 1600:
+        return RATING_BANDS[3]
+    return RATING_BANDS[4]
+
+
+def build_ratings(results: List[GameResult]) -> Dict:
+    """The player's ELO over time, plus accuracy by opponent strength.
+
+    Unrated games are skipped rather than counted as zero, so ``games_rated`` is
+    reported next to the series -- the caller can see how thin the data is
+    instead of trusting a chart drawn from two points.
+    """
+    points: List[Dict] = []
+    for order, r in enumerate(results):
+        if not r.moves or r.player_color is None:
+            continue
+        elo = header_elo(r.headers, r.player_color)
+        if elo is None:
+            continue
+        other = not r.player_color
+        points.append(
+            {
+                "index": r.index,
+                "date": game_date(r.headers),
+                "elo": elo,
+                "opponent": r.headers.get("Black" if r.player_color else "White", ""),
+                "opponent_elo": header_elo(r.headers, other),
+                "accuracy": round(r.accuracy, 2),
+                "result": r.player_result,
+                "_order": order,
+            }
+        )
+
+    # Chronological, with PGN order as the tiebreak so games sharing a date keep
+    # the sequence they were played in.
+    points.sort(key=lambda p: (p["date"] or "9999-99-99", p["_order"]))
+    for p in points:
+        p.pop("_order", None)
+
+    buckets: Dict[str, Dict] = {
+        band: {"band": band, "games": 0, "_acc": 0.0} for band in RATING_BANDS
+    }
+    for r in results:
+        if not r.moves or r.player_color is None:
+            continue
+        band = _band_for(header_elo(r.headers, not r.player_color))
+        if band is None:
+            continue
+        buckets[band]["games"] += 1
+        buckets[band]["_acc"] += r.accuracy
+    for b in buckets.values():
+        b["accuracy"] = round(b.pop("_acc") / b["games"], 2) if b["games"] else None
+
+    elos = [p["elo"] for p in points]
+    return {
+        "player": next((r.player_name for r in results if r.player_name), ""),
+        "current": elos[-1] if elos else None,
+        "first": elos[0] if elos else None,
+        "peak": max(elos) if elos else None,
+        "low": min(elos) if elos else None,
+        "delta": (elos[-1] - elos[0]) if len(elos) >= 2 else None,
+        "games_rated": len(elos),
+        "series": points,
+        "buckets": list(buckets.values()),
+    }
+
+
+# --------------------------------------------------------------------------
+# self-test
+# --------------------------------------------------------------------------
+
+def self_test() -> int:
+    """Check the rating extraction and the shared scoring path. No network.
+
+    Lives here rather than in a tests/ directory because the repo keeps no test
+    files: these checks describe the contract of the module above them, so they
+    cannot drift away from it the way a separate file can.
+    """
+    checks = 0
+    failures: List[str] = []
+
+    def check(label: str, got, want) -> None:
+        nonlocal checks
+        checks += 1
+        if got != want:
+            failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    def game(index, headers, color, accuracy=50.0, player="me"):
+        g = GameResult(headers=headers, index=index, player_color=color,
+                       player_name=player, accuracy=accuracy)
+        g.moves = [MoveRecord(ply=0, move_number=1, color="white", san="e4", uci="e2e4",
+                              fen="", is_players_turn=(color is chess.WHITE))]
+        g.player_result = "win"
+        return g
+
+    # -- header_elo: the tag is missing often enough to matter ----------------
+    check("elo white", header_elo({"WhiteElo": "1500", "BlackElo": "1400"}, chess.WHITE), 1500)
+    check("elo black", header_elo({"WhiteElo": "1500", "BlackElo": "1400"}, chess.BLACK), 1400)
+    check("elo missing tag", header_elo({"White": "a", "Black": "b"}, chess.WHITE), None)
+    check("elo blank tag", header_elo({"WhiteElo": "  "}, chess.WHITE), None)
+    check("elo zero is unrated", header_elo({"WhiteElo": "0"}, chess.WHITE), None)
+    check("elo float form", header_elo({"WhiteElo": "1500.5"}, chess.WHITE), 1500)
+    check("elo garbage", header_elo({"WhiteElo": "?"}, chess.WHITE), None)
+
+    # -- dates: "2021.03.31", lichess timestamps, ISO, junk -------------------
+    check("date dotted", game_date({"Date": "2021.03.31"}), "2021-03-31")
+    check("date timestamped", game_date({"Date": "2021.03.31 18:16:29"}), "2021-03-31")
+    check("date utc preferred", game_date({"Date": "2021.03.31", "UTCDate": "2020-01-02"}),
+          "2020-01-02")
+    check("date junk", game_date({"Date": "??.??"}), "")
+
+    # -- bands ---------------------------------------------------------------
+    check("band low", _band_for(350), "<400")
+    check("band mid", _band_for(900), "800-1200")
+    check("band top", _band_for(2400), "1600+")
+    check("band unrated", _band_for(None), None)
+
+    # -- build_ratings: the interesting cases --------------------------------
+    empty = build_ratings([])
+    check("no games -> current", empty["current"], None)
+    check("no games -> rated count", empty["games_rated"], 0)
+    check("no games -> bands are empty but present", len(empty["buckets"]), len(RATING_BANDS))
+    check("no games -> band accuracy is None", empty["buckets"][0]["accuracy"], None)
+
+    one = build_ratings([game(1, {"Date": "2021.03.31", "White": "me",
+                                   "Black": "you", "WhiteElo": "900",
+                                   "BlackElo": "800"}, chess.WHITE, 70.0)])
+    check("single game -> current", one["current"], 900)
+    check("single game -> delta is None, not 0", one["delta"], None)
+    check("single game -> opponent", one["series"][0]["opponent"], "you")
+    check("single game -> opponent elo", one["series"][0]["opponent_elo"], 800)
+    check("single game -> bucket counted", one["buckets"][2]["games"], 1)
+    check("unrated opponent lands in no band",
+          sum(b["games"] for b in build_ratings([
+              game(1, {"Date": "2021.03.31", "White": "me", "Black": "you",
+                       "WhiteElo": "900"}, chess.WHITE, 70.0)])["buckets"]), 0)
+
+    two = build_ratings([
+        game(2, {"Date": "2021.04.01", "White": "me", "Black": "b", "WhiteElo": "1010"},
+             chess.WHITE, 80.0),
+        game(1, {"Date": "2021.03.31", "White": "me", "Black": "a", "WhiteElo": "900"},
+             chess.WHITE, 60.0),
+    ])
+    check("sorted chronologically", [p["elo"] for p in two["series"]], [900, 1010])
+    check("current is the last game", two["current"], 1010)
+    check("first is the first game", two["first"], 900)
+    check("delta", two["delta"], 110)
+    check("peak", two["peak"], 1010)
+    check("low", two["low"], 900)
+    check("rated count", two["games_rated"], 2)
+    check("order field stripped", "_order" in two["series"][0], False)
+
+    # unrated games are skipped, never counted as 0
+    mixed = build_ratings([
+        game(1, {"Date": "2021.03.31", "White": "me", "Black": "a", "WhiteElo": "900"},
+             chess.WHITE),
+        game(2, {"Date": "2021.04.02", "White": "me", "Black": "b"}, chess.WHITE),
+        game(3, {"Date": "2021.04.03", "White": "me", "Black": "c",
+                 "WhiteElo": "1200"}, chess.WHITE),
+    ])
+    check("unrated skipped", mixed["games_rated"], 2)
+    check("unrated does not drag current to 0", mixed["current"], 1200)
+    check("unrated game is in no opponent band", sum(b["games"] for b in mixed["buckets"]), 0)
+
+    # undated games sort last rather than first, and keep PGN order
+    undated = build_ratings([
+        game(1, {"White": "me", "Black": "a", "WhiteElo": "1500"}, chess.WHITE),
+        game(2, {"Date": "2021.03.31", "White": "me", "Black": "b", "WhiteElo": "700"},
+             chess.WHITE),
+    ])
+    check("undated sorts last", [p["index"] for p in undated["series"]], [2, 1])
+
+    # games the player is not in contribute no series points
+    other = build_ratings([
+        game(1, {"Date": "2021.03.31", "White": "a", "Black": "b", "WhiteElo": "900"},
+             None, 55.0),
+    ])
+    check("unmatched player -> no series", other["games_rated"], 0)
+
+    # -- the refactor changed nothing ----------------------------------------
+    def labels_mod_label(**kwargs):
+        """The label, derived the way `classify()` did before the extraction."""
+        return labels.classify_data(
+            labels.LabelInput(
+                sacrifice=None, in_book=False, forced=False, is_player=True, **kwargs
+            )
+        )
+
+    # `Analyser._score` used to do this arithmetic inline; it now calls
+    # scoring.py. This compares both on identical engine output, so a future
+    # edit that quietly changes a sign or a rounding cannot pass unnoticed.
+    # The engine itself is not deterministic under a time cap -- it can reach
+    # depth 22 on one run and 21 on the next, which is enough to move gap_pp
+    # across the 10-point "great" threshold -- so this fixes the *inputs*.
+    def legacy_score(lines_before, lines_after, uci):
+        """The arithmetic as it was written before scoring.py existed."""
+        eval_before = lines_before[0].score_cp if lines_before else 0.0
+        eval_after = -lines_after[0].score_cp if lines_after else -eval_before
+        wp_before = win_percent(eval_before)
+        wp_after = win_percent(eval_after)
+        loss = max(0.0, wp_before - wp_after)
+        best_uci = lines_before[0].uci if lines_before else None
+        best_san = lines_before[0].san if lines_before else None
+        best_eval = lines_before[0].score_cp if lines_before else None
+        second_uci = second_san = None
+        second_eval = None
+        gap = None
+        if len(lines_before) > 1:
+            second = lines_before[1]
+            second_uci, second_san = second.uci, second.san
+            second_eval = second.score_cp
+            gap = round(win_percent(best_eval or 0.0) - win_percent(second.score_cp), 2)
+        return {
+            "eval_before": eval_before,
+            "eval_after": eval_after,
+            "win_percent_before": wp_before,
+            "win_percent_after": wp_after,
+            "loss_pp": loss,
+            "accuracy": round(accuracy_from_loss(loss), 2),
+            "best_uci": best_uci,
+            "best_san": best_san,
+            "best_eval": best_eval,
+            "second_uci": second_uci,
+            "second_san": second_san,
+            "second_eval": second_eval,
+            "gap_pp": gap,
+        }
+
+    fixtures = [
+        # a normal move, with a clear runner-up
+        (
+            [engines.Line("e2e4", "e4", ["e2e4"], cp=30.0, depth=14),
+             engines.Line("d2d4", "d4", ["d2d4"], cp=12.0, depth=14)],
+            [engines.Line("e7e5", "e5", ["e7e5"], cp=-28.0, depth=14)],
+        ),
+        # a blunder: the position after is far worse
+        (
+            [engines.Line("d2d4", "d4", ["d2d4"], cp=25.0, depth=20),
+             engines.Line("c2c4", "c4", ["c2c4"], cp=24.0, depth=20)],
+            [engines.Line("e7e5", "e5", ["e7e5"], cp=900.0, depth=20)],
+        ),
+        # a forced mate, where the centipawn sentinel must survive
+        (
+            [engines.Line("d1h5", "Qh5#", ["d1h5"], mate=1, depth=30),
+             engines.Line("a1a8", "Rxa8", ["a1a8"], cp=-900.0, depth=30)],
+            [engines.Line("e8f7", "Kf7", ["e8f7"], cp=100000.0, depth=30)],
+        ),
+        # MultiPV=1, so there is no runner-up at all
+        (
+            [engines.Line("g1f3", "Nf3", ["g1f3"], cp=12.0, depth=11)],
+            [engines.Line("d7d5", "d5", ["d7d5"], cp=10.0, depth=11)],
+        ),
+    ]
+
+    for index, (before_lines, after_lines) in enumerate(fixtures):
+        board = chess.Board()
+        uci = "e2e4"
+        legacy = legacy_score(before_lines, after_lines, uci)
+        modern = scoring.score_move(
+            board, uci, before=before_lines, after=after_lines, depth=14
+        ).to_dict()
+        for field in legacy:
+            check(f"fixture {index}: {field} unchanged", modern[field], legacy[field])
+        # ...and the label that comes out of it must be identical too.
+        legacy_label = labels_mod_label(
+            uci=uci,
+            best_uci=legacy["best_uci"],
+            loss_pp=legacy["loss_pp"],
+            win_percent_before=legacy["win_percent_before"],
+            win_percent_after=legacy["win_percent_after"],
+            gap_pp=legacy["gap_pp"],
+        )
+        fresh = scoring.score_move(
+            board, uci, before=before_lines, after=after_lines, depth=14
+        )
+        scoring.label_move(fresh, uci=uci, in_book=False, forced=False, sacrifice=None)
+        check(f"fixture {index}: label unchanged", fresh.label, legacy_label)
+
+    # -- the shared scoring path agrees with itself --------------------------
+    # Values chosen so the move genuinely is best: a centipawn-scale drift after
+    # e4 costs well under the 1pp that separates "best" from "excellent".
+    board = chess.Board()
+    before = [engines.Line("e2e4", "e4", ["e2e4", "e7e5"], cp=30.0, depth=14),
+              engines.Line("d2d4", "d4", ["d2d4", "d7d5"], cp=20.0, depth=14)]
+    after_board = board.copy()
+    after_board.push(board.parse_uci("e2e4"))
+    after = [engines.Line("e7e5", "e5", ["e7e5"], cp=-28.0, depth=14)]
+
+    same = scoring.score_move(board, "e2e4", before=before, after=after, depth=14)
+    check("best san", same.best_san, "e4")
+    check("second san", same.second_san, "d4")
+    check("gap is E1-E2 in win percent", round(same.gap_pp or 0, 0),
+          round(win_percent(30.0) - win_percent(20.0), 0))
+    check("eval_after is negated to the mover's view", same.eval_after, 28.0)
+    check("pv rendered as san", same.best_pv[:1], ["e4"])
+
+    label = scoring.label_move(same, uci="e2e4", in_book=False, forced=False, sacrifice=None)
+    check("best move labels best", label, Label.BEST)
+    check("glyph set", same.glyph, "")
+
+    # The label follows the loss, not whether the move matched the engine's
+    # preference: a harmless alternative is still an excellent move.
+    off = scoring.score_move(board, "a2a3", before=before, after=after, depth=14)
+    scoring.label_move(off, uci="a2a3", in_book=False, forced=False, sacrifice=None)
+    check("a harmless alternative is not punished for being different",
+          off.label in (Label.BEST, Label.EXCELLENT, Label.GOOD), True)
+
+    # A move that throws the game away is labelled by how much it cost.
+    blundered = scoring.score_move(
+        board, "d2d4",
+        before=before,
+        after=[engines.Line("e7e5", "e5", ["e7e5"], cp=900.0, depth=14)],
+        depth=14,
+    )
+    scoring.label_move(blundered, uci="d2d4", in_book=False, forced=False, sacrifice=None)
+    check("a move that gives up the game is a blunder", blundered.label, Label.BLUNDER)
+
+    # MultiPV=1 gives no runner-up, so 'great' must be unreachable
+    solo = scoring.score_move(board, "e2e4", before=before[:1], after=after, depth=14)
+    check("no second line -> gap is None", solo.gap_pp, None)
+    scoring.label_move(solo, uci="d2d4", in_book=False, forced=False, sacrifice=None)
+    check("great needs a runner-up", solo.label != Label.GREAT, True)
+
+    # is_forced_move gates 'great': with one legal move there was no choice
+    forced = chess.Board("7k/8/8/8/8/8/5q2/7K w - - 0 1")
+    check("in check counts as forced", is_forced_move(forced), True)
+
+    # detect_sacrifice: material actually given up against the best reply.
+    # Queens trade evenly, so the test uses a rook, which leaves a real deficit.
+    sac = chess.Board()
+    sac_move = sac.parse_uci("e2e4")
+    check("nothing given yet", detect_sacrifice(sac, sac_move, None, chess.WHITE), 0.0)
+
+    # The queen takes a pawn that a rook defends, then walks into the recapture:
+    # a queen for a pawn. Measured after the refutation, which is the whole
+    # point -- a sacrifice that only worked because the opponent blundered
+    # would not be a sacrifice.
+    # Black king on e8: clear of both the h-file and rank 5, so the rook on h5
+    # is not pinning or checking anything before the sacrifice.
+    trap = chess.Board("4k3/8/8/3p1r2/8/8/3Q4/K7 w - - 0 1")
+    take = trap.parse_uci("d2d5")
+    after_take = trap.copy(stack=False)
+    after_take.push(take)
+    recapture = after_take.parse_uci("f5d5")
+    check("queen given for a pawn", detect_sacrifice(trap, take, recapture, chess.WHITE), 8.0)
+    # Without the refutation the move simply won a pawn, which is negative:
+    # "material given" is measured against the opponent's best reply, so the
+    # whole point is that an unrefuted capture does not read as a sacrifice.
+    check("an unrefuted capture is not a sacrifice",
+          detect_sacrifice(trap, take, None, chess.WHITE), -1.0)
+    check("an illegal reply is ignored, not applied",
+          detect_sacrifice(trap, take, trap.parse_uci("d2d4"), chess.WHITE), -1.0)
+
+    # -- brilliant needs a position worth winning in --------------------------
+    #
+    # The bug this guards against: `loss <= 2pp` is vacuous once the position is
+    # already lost. At win_percent_before = 10, *every* move costs at most ~10pp,
+    # so a queen sacrifice in a lost game passed the "still no worse than the
+    # alternatives" test. The two floors below are what make "sound" mean sound.
+    def brilliant_of(**overrides):
+        """A sacrifice, labelled. Overrides vary the one input under test."""
+        base = dict(
+            uci="e2e4",
+            best_uci="e2e4",
+            loss_pp=1.9,
+            win_percent_before=95.0,
+            win_percent_after=93.1,
+            gap_pp=0.5,
+            sacrifice=3.3,
+            in_book=False,
+            forced=False,
+            is_player=True,
+        )
+        base.update(overrides)
+        return labels.classify_data(labels.LabelInput(**base))
+
+    # These assert "not brilliant" rather than a specific label, and deliberately
+    # so: what the move *is* called instead is the loss band's business, and it
+    # shifts when a band moves. Whether it is brilliant is the decision under
+    # test.
+    def not_brilliant(label, **overrides):
+        return brilliant_of(**overrides) != Label.BRILLIANT
+
+    check("a real sacrifice is brilliant", brilliant_of(), Label.BRILLIANT)
+    check("a sacrifice in a lost position is not",
+          not_brilliant("", win_percent_before=10.2), True)
+    check("a sacrifice that leaves you worse is not",
+          not_brilliant("", win_percent_after=8.3), True)
+    check("both floors, to the numbers from /games/1/31",
+          not_brilliant("", win_percent_before=10.2, win_percent_after=8.3), True)
+    # Just either side of each floor, so a threshold moved by accident is caught.
+    check("just under the before-floor",
+          not_brilliant("", win_percent_before=labels.BRILLIANT_MIN_WIN_BEFORE - 0.1),
+          True)
+    check("just over the before-floor",
+          brilliant_of(win_percent_before=labels.BRILLIANT_MIN_WIN_BEFORE + 0.1),
+          Label.BRILLIANT)
+    check("just under the after-floor",
+          not_brilliant("", win_percent_after=labels.BRILLIANT_MIN_WIN_AFTER - 0.1), True)
+    check("just over the after-floor",
+          brilliant_of(win_percent_after=labels.BRILLIANT_MIN_WIN_AFTER + 0.1),
+          Label.BRILLIANT)
+    # Morphy's reference cases, which the rule must not discard: both are played
+    # from a winning position and both leave White winning.
+    check("Morphy 13.Rxd7 stays brilliant",
+          brilliant_of(win_percent_before=99.0, win_percent_after=88.0), Label.BRILLIANT)
+    check("Morphy 16.Qb8+ stays brilliant",
+          brilliant_of(win_percent_before=99.5, win_percent_after=97.0), Label.BRILLIANT)
+    # The other gates still apply, so the floors are additive and not a rewrite.
+    check("a book sacrifice is still not brilliant",
+          not_brilliant("", in_book=True), True)
+    check("a forced sacrifice is still not brilliant",
+          not_brilliant("", forced=True), True)
+    check("no material, no brilliant", not_brilliant("", sacrifice=0.4), True)
+
+    # -- per-site identities --------------------------------------------------
+    check("Chess.com is recognised", site_label("Chess.com"), "Chess.com")
+    check("a chess.com URL is recognised", site_label("https://www.chess.com/"),
+          "Chess.com")
+    check("lichess is recognised", site_label("https://lichess.org/"), "LICHESS.ORG")
+    check("LICHESS.ORG upper case is recognised", site_label("LICHESS.ORG"),
+          "LICHESS.ORG")
+    check("an unknown site passes through", site_label("Some Other Server"),
+          "Some Other Server")
+    check("a blank site does not become blank", site_label(""), "Unknown")
+
+    def site_game(index, site, white, black, color):
+        return game(index, {"Site": site, "White": white, "Black": black}, color)
+
+    # `build_identities` consults player.txt for configured-but-unused sites, so
+    # these checks point it at a throwaway file. Without that the real one on the
+    # developer's machine decides what the test asserts, which is how a suite
+    # passes on one checkout and fails on another.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as _tmp_ids:
+        saved_txt, saved_env = player.PLAYER_TXT, os.environ.pop(player.ENV_VAR, None)
+        player.PLAYER_TXT = os.path.join(_tmp_ids, "player.txt")
+        try:
+            # -- one site, from the games ---------------------------------------
+            with open(player.PLAYER_TXT, "w", encoding="utf-8") as _fh:
+                _fh.write("chesscom=mark8hs\n")
+            one_site = build_identities([
+                site_game(1, "Chess.com", "opponent", "MARK8HS", chess.BLACK),
+                site_game(2, "Chess.com", "opponent", "MARK8HS", chess.BLACK),
+            ], player_name="mark8hs")
+            # The Chess.com entry is the one carrying the games.
+            cc = next(i for i in one_site if i["site"] == "Chess.com")
+            check("games counted", cc["games"], 2)
+            # The platform's own spelling, not the lowercase alias: Chess.com
+            # capitalises handles, so this is what a reader would recognise.
+            check("the header spelling wins", cc["name"], "MARK8HS")
+            check("the colour is recorded", cc["player_color"], "black")
+            check("Chess.com sorts first", one_site[0]["site"], "Chess.com")
+            # Two games on one site are one identity, not two.
+            check("two games, one identity",
+                  sum(1 for i in one_site if i["games"]), 1)
+
+            # -- a configured site with no games still appears ------------------
+            with open(player.PLAYER_TXT, "w", encoding="utf-8") as _fh:
+                _fh.write("chesscom=mark8hs\nlichess=mark8hs\n")
+            both = build_identities([
+                site_game(1, "LICHESS.ORG", "mark8hs", "opp", chess.WHITE),
+                site_game(2, "Chess.com", "opp", "MARK8HS", chess.BLACK),
+            ], player_name="mark8hs")
+            check("two sites, Chess.com first regardless of PGN order",
+                  [i["site"] for i in both], ["Chess.com", "LICHESS.ORG"])
+            check("each keeps its own spelling", [i["name"] for i in both],
+                  ["MARK8HS", "mark8hs"])
+
+            # -- an unused site is listed with a zero count, not omitted --------
+            unused = build_identities([
+                site_game(1, "Chess.com", "opp", "MARK8HS", chess.BLACK),
+            ], player_name="mark8hs")
+            check("the unused site is still listed",
+                  [i["site"] for i in unused], ["Chess.com", "LICHESS.ORG"])
+            check("the unused site counts zero", unused[1]["games"], 0)
+            check("the unused site takes its configured name",
+                  unused[1]["name"], "mark8hs")
+            check("the unused site has no colour", unused[1]["player_color"], None)
+
+            # -- nothing configured, and no game the player is in ------
+            # Both at once, because either alone still leaves player.txt able to
+            # contribute an entry, and the point is that neither does.
+            with open(player.PLAYER_TXT, "w", encoding="utf-8") as _fh:
+                _fh.write("# nothing configured\n")
+            check("a game the player is not in contributes no identity",
+                  build_identities([site_game(1, "Chess.com", "a", "b", None)], ""),
+                  [])
+
+            # -- no configuration at all: the analysed game still gets shown ----
+            orphan = build_identities([
+                site_game(1, "Chess.com", "opp", "MARK8HS", chess.BLACK),
+            ], player_name="mark8hs")
+            check("no player.txt -> only the analysed site", len(orphan), 1)
+            check("no player.txt -> the site is still named", orphan[0]["site"],
+                  "Chess.com")
+
+            # -- an explicit --player must not inherit the operator's accounts --
+            # The real bug this caught: `python analyze.py --player Morphy
+            # --pgn games/opera.pgn` attributed the Chess.com and LICHESS.ORG
+            # accounts from the developer's own player.txt to Morphy's game,
+            # because player.txt was read unconditionally. It describes whoever
+            # ran the command, so it is only consulted for the `me` alias.
+            with open(player.PLAYER_TXT, "w", encoding="utf-8") as _fh:
+                _fh.write("chesscom=mark8hs\nlichess=mark8hs\n")
+            explicit = build_identities(
+                [site_game(1, "Paris, France", "Morphy, Paul", "Duke", chess.WHITE)],
+                player_name="Morphy",
+                via_alias=False,
+            )
+            check("an explicit player gets only their own games' sites",
+                  [i["site"] for i in explicit], ["Paris, France"])
+            check("and none of the operator's accounts",
+                  [i["name"] for i in explicit], ["Morphy, Paul"])
+            via_alias = build_identities(
+                [site_game(1, "Paris, France", "Morphy, Paul", "Duke", chess.WHITE)],
+                player_name="Morphy",
+                via_alias=True,
+            )
+            check("the alias does read player.txt", len(via_alias), 3)
+        finally:
+            player.PLAYER_TXT = saved_txt
+            if saved_env is not None:
+                os.environ[player.ENV_VAR] = saved_env
+
+    print(f"analyze: {checks - len(failures)}/{checks} checks passed")
+    for problem in failures:
+        print(f"  FAIL {problem}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 # --------------------------------------------------------------------------
@@ -863,6 +1560,7 @@ def build_dashboard(results: List[GameResult]) -> Dict:
         "weaknesses": recurring_weaknesses(played),
         "brilliancies": collect_brilliancies(played),
         "totals": totals(played),
+        "ratings": build_ratings(results),
     }
 
 
@@ -972,6 +1670,12 @@ def load_games(pgn_path: str) -> List[chess.pgn.Game]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Offline check of the rating extraction and the shared scoring path. Cheap
+    # enough that it can run before every analysis.
+    if "--self-test" in argv:
+        return self_test()
+
     ap = argparse.ArgumentParser(
         description="Analyse a PGN with Stockfish, cross-checked with Lc0."
     )
@@ -1140,7 +1844,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     data = {
         "generated": _dt.datetime.now().isoformat(timespec="seconds"),
-        "player": args.player,
+        # The *resolved* name, not `args.player`: with `--player me` that
+        # argument is the literal string "me", which is what the report used to
+        # print above the ELO. `player_name` is empty only when nothing is
+        # configured, in which case the old text is the honest fallback.
+        "player": player_name or args.player,
+        # Per-site, because one name cannot answer "which account is this?" and
+        # `--player me` has one per site in player.txt. `via_alias` keeps
+        # player.txt out of a report about somebody else's games.
+        "player_identities": build_identities(
+            results, player_name, via_alias=player.is_me(args.player)
+        ),
         "settings": {
             "depth": args.depth,
             "focus_depth": args.focus_depth,

@@ -772,11 +772,18 @@ def verify(record: dict) -> bool:
         if record.get(key):
             say(f"    {key}: {record[key]}")
 
-    # The project keeps no test files, so the pure logic -- the `me` alias and the
-    # archive skip rule -- is checked by the modules that own it. Cheap, offline,
+    # The project keeps no test files, so the pure logic -- the `me` alias, the
+    # archive skip rule, the ELO extraction, the report-pack split and the
+    # server's routing -- is checked by the modules that own it. Cheap, offline,
     # and impossible to forget because it runs with the rest of the verification.
     step("self-tests")
-    for module, label in (("player", "--player me"), ("process_api.fetcher", "archive skip rule")):
+    for module, label in (
+        ("player", "--player me"),
+        ("process_api.fetcher", "archive skip rule"),
+        ("analyze", "ELO extraction + shared scoring"),
+        ("pack", "the report-pack split"),
+        ("serve", "routing + the SPA fallback"),
+    ):
         try:
             __import__(module)
             failed = sys.modules[module].self_test()

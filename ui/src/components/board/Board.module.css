@@ -1,0 +1,240 @@
+/*
+ * chessground's own class names, kept in one list so the `:global()` wrappers
+ * below are auditable at a glance.
+ *
+ * WHY THIS FILE NEEDS `:global()` EVERYWHERE
+ * ------------------------------------------
+ * Every class in a CSS Module is treated as local and *hashed* — that is the point
+ * of the system. But chessground builds its DOM itself and emits the literal class
+ * names `selected`, `move-dest`, `last-move`, `oc` and so on. Writing
+ * `.board cg-board square.selected` here compiled to
+ *
+ *     ._board_1u89s_12 cg-board square._selected_1u89s_108
+ *
+ * which matches nothing that chessground ever creates. Every rule in that family
+ * was dead: the selection wash, the destination markers, the last-move tint, the
+ * check highlight, the coordinates.
+ *
+ * It is silent, because the selector looks right in the source and the DOM has the
+ * class the source names — the mismatch is only visible in the built CSS or in a
+ * computed style. The classes below are the ones chessground owns, so they are
+ * marked `:global()`; ours (`.frame`, `.board`) stay hashed.
+ */
+
+.frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+/*
+ * chessground sizes itself from its container, so the board element fills the
+ * frame and everything else is derived. Sizing the board in absolute units is
+ * what forced the old report to re-render on window resize.
+ */
+.board {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * The checkerboard.
+ *
+ * chessground's own themes ship this as an embedded SVG, but the board has to
+ * come from our tokens, so it is drawn with two offset gradients instead. One
+ * 25% tile is a 2×2 block of squares, so the pattern alternates correctly in
+ * both orientations — a CSS-generated checkerboard cannot be flipped by
+ * `orientation`, and getting that wrong is how boards end up with an a1 that is
+ * light from one side and dark from the other.
+ */
+.board :global(cg-board) {
+  background-color: var(--sq-light);
+  /*
+   * One conic quadrant tile is 2x2 squares, so a background-size of 25% (a
+   * quarter of the board in each axis) tiles it into exactly 8x8. The dark
+   * quadrants are top-right and bottom-left, which is what makes a1 dark.
+   *
+   * The first attempt used offset 45° linear gradients; at a 200% tile size
+   * they produced visible diagonal seams across the board rather than a
+   * checkerboard. A conic gradient has no seam because it tiles at its own
+   * period.
+   */
+  background-image: conic-gradient(
+    var(--sq-dark) 0% 25%,
+    transparent 0% 50%,
+    var(--sq-dark) 0% 75%,
+    transparent 0%
+  );
+  background-size: 25% 25%;
+  background-position: 0 0;
+}
+
+/*
+ * Free play. A tone, not a theme: only the two square colours change.
+ *
+ * The conic-gradient declaration is repeated verbatim rather than moved to a
+ * shared custom property, because a CSS variable holding a whole background
+ * shorthand loses the per-longhand overrides below and because the tiling *is*
+ * the load-bearing part of this rule -- see above on why it is a conic tile at
+ * 25%. A one-character difference here is a half-inverted board.
+ */
+.framePlay :global(cg-board) {
+  background-color: var(--sq-light-play);
+  background-image: conic-gradient(
+    var(--sq-dark-play) 0% 25%,
+    transparent 0% 50%,
+    var(--sq-dark-play) 0% 75%,
+    transparent 0%
+  );
+}
+
+/*
+ * Overlays. All of these are translucent so the square colour underneath still
+ * reads -- replacing it outright loses the checkerboard under the highlight.
+ */
+.board :global(cg-board square.last-move) {
+  background: rgb(220 235 120 / 42%);
+}
+
+.board :global(cg-board square.check) {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(224 82 82 / 92%) 0%,
+    rgb(224 82 82 / 62%) 45%,
+    transparent 78%
+  );
+}
+
+/*
+ * The selected piece's square.
+ *
+ * A flat wash alone is nearly invisible here, and that is not a matter of taste:
+ * chessground paints squares first and pieces after (render.js prepends squares
+ * and appends pieces), so a piece covers ~78% of its square and hides the middle
+ * of whatever is underneath. Only the margin shows, so the highlight has to *be*
+ * the margin.
+ *
+ * Two layers, because one is not enough on both square colours: the wash lifts the
+ * square off its neighbours, and the band reads on #b9c4b0 and on #6f8f68 alike. The
+ * pale hairline inside the band is what keeps it legible when the band lands on a
+ * light square and the wash alone would not.
+ *
+ * The wash stops at 55% so it cannot be confused with the check highlight (a radial
+ * red) or the last-move tint, which share these squares.
+ */
+.board :global(cg-board square.selected) {
+  background: rgb(76 139 245 / 55%);
+  box-shadow:
+    inset 0 0 0 3px rgb(226 236 255 / 88%),
+    inset 0 0 0 6px rgb(76 139 245 / 92%);
+}
+
+/*
+ * "You can play here": a disc in the middle of the square.
+ *
+ * Near-white rather than the mid grey it was. #8b94a7 sits close in luminance to
+ * *both* square colours, so it read on neither: a smudge on #6f8f68 and a tint on
+ * #b9c4b0. A light marker is the only single choice with contrast on both, and the
+ * darker rim at 52% is what makes it read as a shape rather than a glow -- it is also
+ * the part that survives on a light square.
+ *
+ * Still grey-blue rather than teal or green: the coloured arrows mean "your move" and
+ * "the engine's move", and a marker states a fact about the rules instead.
+ */
+.board :global(cg-board square.move-dest) {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(236 242 252 / 94%) 0%,
+    rgb(236 242 252 / 66%) 34%,
+    rgb(126 145 178 / 40%) 52%,
+    transparent 70%
+  );
+}
+
+/*
+ * A capture: a ring, so "takes a piece" is a different shape and not a different
+ * shade. chessground adds `oc` to a destination that already holds a piece
+ * (render.js).
+ *
+ * A ring rather than a disc because the piece hides the centre of its square, which
+ * is exactly where a disc would be. The ring sits in the margin, where nothing
+ * covers it. Shape rather than colour is also the accessibility rule from 001 §3.1.
+ */
+.board :global(cg-board square.move-dest.oc) {
+  background: radial-gradient(
+    ellipse at center,
+    transparent 0%,
+    transparent 44%,
+    rgb(236 242 252 / 88%) 52%,
+    rgb(126 145 178 / 46%) 66%,
+    transparent 74%
+  );
+}
+
+.board :global(cg-board square.premove-dest) {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(155 127 224 / 50%) 0%,
+    transparent 70%
+  );
+}
+
+/*
+ * Coordinates. chessground puts ranks and files in containers beside the board,
+ * so the selectors have to match its own structure rather than the board.
+ */
+.board :global(cg-board coord) {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+/*
+ * Dark squares get light text, light squares dark text.
+ *
+ * `.orientation-*` is chessground's own class on the wrapper (wrap.js toggles it),
+ * so it is global too -- these rules were dead for the same reason as the rest.
+ */
+:global(.orientation-white) :global(.ranks) :nth-child(odd),
+:global(.orientation-white) :global(.files) :nth-child(even) {
+  color: rgb(40 56 40 / 85%);
+}
+
+:global(.orientation-white) :global(.ranks) :nth-child(even),
+:global(.orientation-white) :global(.files) :nth-child(odd) {
+  color: rgb(238 245 235 / 85%);
+}
+
+:global(.orientation-black) :global(.ranks) :nth-child(even),
+:global(.orientation-black) :global(.files) :nth-child(odd) {
+  color: rgb(40 56 40 / 85%);
+}
+
+:global(.orientation-black) :global(.ranks) :nth-child(odd),
+:global(.orientation-black) :global(.files) :nth-child(even) {
+  color: rgb(238 245 235 / 85%);
+}
+
+.board :global(cg-board piece.animating) {
+  z-index: 5;
+}
+
+/* A soft drop shadow under the board, so it reads as a physical object. */
+.frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+}
+
+/* Honour the OS motion setting: a piece sliding is the point, but not at the
+   cost of making the board unpleasant to use. */
+@media (prefers-reduced-motion: reduce) {
+  .board :global(cg-board piece) {
+    transition: none !important;
+  }
+}

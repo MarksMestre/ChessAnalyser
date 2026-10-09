@@ -1,0 +1,300 @@
+.page {
+  padding: var(--sp-4) var(--sp-5) var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  /* The board column is sized by the viewport so a big board really is big,
+     with a hard cap so a 4K display does not push the move list off-screen. */
+  --board-size: clamp(320px, min(46vw, 62vh), 660px);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.headerMain h1 {
+  font-size: 18px;
+}
+
+.headerMeta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  flex-wrap: wrap;
+}
+
+.headerStats {
+  display: flex;
+  gap: var(--sp-4);
+  margin-left: auto;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.statValue {
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.statLabel {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+}
+
+.headerActions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.linkBtn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12.5px;
+  color: var(--fg);
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.linkBtn:hover {
+  text-decoration: none;
+  background: var(--panel-3);
+  border-color: #3a445c;
+}
+
+/* ----------------------------------------------------------------- graph */
+
+.graphRow {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  animation: slideDown var(--t-base) var(--ease-out);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.graphLabel {
+  position: absolute;
+  right: var(--sp-3);
+  top: var(--sp-2);
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- columns */
+
+.columns {
+  display: grid;
+  grid-template-columns: var(--board-size) minmax(340px, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+  .boardColumn {
+    max-width: 100%;
+  }
+}
+
+.boardColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: var(--board-size);
+  max-width: 100%;
+}
+
+.boardWrap {
+  position: relative;
+  width: 100%;
+}
+
+.flip {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: rgb(13 15 20 / 82%);
+  backdrop-filter: blur(4px);
+  color: var(--fg-muted);
+  font-size: 15px;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: opacity var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+
+.flip:hover {
+  opacity: 1;
+  background: var(--panel-2);
+  color: var(--fg);
+}
+
+.evalStrip {
+  padding: 0 2px;
+}
+
+/* ------------------------------------------------------------ side column */
+
+.sideColumn {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  /* Matches the board's height so the two columns end together. */
+  height: calc(var(--board-size) + 150px);
+  min-height: 520px;
+}
+
+@media (max-width: 1000px) {
+  .sideColumn {
+    height: auto;
+    min-height: 0;
+  }
+}
+
+.listHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.listHint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+
+.moveScroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ info */
+
+.infoPanel {
+  padding: var(--sp-4);
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.infoKey {
+  color: var(--fg-muted);
+  width: 40%;
+}
+
+.infoHeading {
+  margin: var(--sp-5) 0 var(--sp-2);
+}
+
+/* One column per label; digits align rather than ragged text. */
+.count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.countZero {
+  color: var(--fg-dim);
+}
+
+/* ------------------------------------------------------------- variation */
+
+/*
+ * "You are reading somewhere else, and here is the way back."
+ *
+ * Appears whenever the cursor is inside a variation. Being elsewhere without saying
+ * so is the failure mode this exists to prevent: the board shows a position, the
+ * move list highlights a row, and nothing connects them.
+ *
+ * Amber rather than the accent, because it is a warning about where you are rather
+ * than a control.
+ */
+.variationBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: #2f2714;
+  border: 1px solid #6b5a1f;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: #f3d98a;
+}
+
+.variationBanner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.openingName {
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.eco {
+  color: var(--accent);
+  font-size: 12px;
+  margin-bottom: var(--sp-3);
+}
+
+.openingLink {
+  display: inline-block;
+  margin-top: var(--sp-4);
+  font-size: 12.5px;
+}
+
+/* --------------------------------------------------------------- loading */
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.loadingGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-4);
+}

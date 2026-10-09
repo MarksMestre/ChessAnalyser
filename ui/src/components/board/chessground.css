@@ -1,0 +1,14 @@
+/**
+ * chessground's own stylesheets.
+ *
+ * Imported from the package rather than copied, so they track the installed
+ * version. The cburnett sheet embeds every piece as a base64 data URI, which is
+ * what keeps the board working offline — the same guarantee the old report made
+ * by inlining `chess.svg`.
+ *
+ * The square pattern is *not* taken from chessground: its `brown.css` ships one
+ * as an embedded SVG, and we need the board to come from our own tokens. Board
+ * colours are defined in Board.module.css.
+ */
+@import 'chessground/assets/chessground.base.css';
+@import 'chessground/assets/chessground.cburnett.css';

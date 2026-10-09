@@ -465,7 +465,8 @@ function renderGame(index, ply){
       el('span',{class:'pill'}, 'acc ' + g.accuracy.toFixed(1)),
       el('span',{class:'pill'}, 'ACPL ' + g.acpl.toFixed(1)),
       g.opening ? el('span',{class:'pill'}, (g.eco||'') + ' ' + g.opening) : null,
-      g.book_end_ply ? el('span',{class:'pill'}, 'book ended at move ' + Math.ceil(g.book_end_ply/2)) : null
+      g.book_end_ply ? el('span',{class:'pill'}, 'left book theory on '
+                              + book_exit_text(g)) : null
     ),
     el('div',{class:'toolbar'},
       el('button',{class:'btn', onclick:() => { switchView('drill'); startDrill(g.index); }},
@@ -758,6 +759,138 @@ switchView('dashboard');
 """
 
 
+def book_exit_text(game: Dict) -> str:
+    """``3. g3`` -- the move on which the game left opening theory.
+
+    ``book_end_ply`` is the ply of the move that *left* the book (analyze.py sets it
+    from the first record flagged ``left_book``), so the move number is
+    ``ply // 2 + 1``.  The previous rendering used ``ceil(ply / 2)``, which is the
+    *last* book move, and labelled it "book ended at move N" -- while move N was
+    itself book theory.  A game that stayed in book for four plies was therefore
+    reported as leaving it on move 2.
+
+    Kept in step with ``ui/src/lib/book.ts``, which does the same arithmetic for the
+    React report; both read the same field and both describe the leaving move.
+    """
+    ply = int(game.get("book_end_ply") or 0)
+    move_no = ply // 2 + 1
+    moves = game.get("moves") or []
+    san = ""
+    if 0 <= ply < len(moves):
+        san = (moves[ply].get("san") or "").strip()
+    return f"{move_no}. {san}" if san else f"move {move_no}"
+
+
+def ensure_ratings(data: Dict, *, verbose: bool = True) -> Dict:
+    """Fill in ``dashboard.ratings`` if the data predates it.
+
+    ``analyze.py`` writes the rating series, but a ``data.json`` produced by an
+    older version will not have it, and the Overview page is built around it.
+    Recomputing it here is idempotent and costs milliseconds, so re-rendering an
+    existing report does not require re-running the engines -- which is the whole
+    point of this module.
+    """
+    import analyze
+
+    dashboard = data.setdefault("dashboard", {})
+    if dashboard.get("ratings"):
+        return data
+
+    # build_ratings() works on GameResult objects, so reconstruct just enough of
+    # one per game from the serialised form.
+    results = []
+    for game in data.get("games") or []:
+        result = analyze.GameResult(
+            headers=dict(game.get("headers") or {}),
+            index=game.get("index", 0),
+            player_color=game.get("player_color"),
+            player_name=game.get("player_name", ""),
+            result=(game.get("headers") or {}).get("Result", "*"),
+        )
+        result.accuracy = game.get("accuracy", 0.0)
+        result.player_result = game.get("player_result", "*")
+        # A non-empty move list is what "this game was actually analysed" means
+        # to build_ratings, and it avoids reconstructing thousands of records.
+        result.moves = [analyze.MoveRecord(
+            ply=0, move_number=1, color="white", san="", uci="", fen="",
+            is_players_turn=True,
+        )] if game.get("moves") else []
+        results.append(result)
+
+    dashboard["ratings"] = analyze.build_ratings(results)
+    if verbose and not dashboard["ratings"].get("games_rated"):
+        print("  note: no rated games in this set, so the ELO chart has no points")
+    return data
+
+
+def write_pack(data: Dict, out_dir: str, *, embed_limit: int = 0,
+               verbose: bool = True) -> str:
+    """Split data.json into the pack the React app loads incrementally.
+
+    data.json is ~70 KB per game, so a 3089-game archive is ~216 MB -- far too
+    large to inline into one page.  The pack keeps a light index in report.json
+    and one file per game, fetched when the game is opened.
+    """
+    import pack as pack_mod
+
+    ensure_ratings(data, verbose=verbose)
+    pack_mod.write_pack(data, out_dir, embed_limit=embed_limit)
+    if verbose:
+        sizes = pack_mod.pack_size(out_dir)
+        print(f"  pack: {out_dir}")
+        print(f"        report.json {sizes['report'] / 1024:.0f} KB"
+              f" + {sizes['games_count']} game file(s) {sizes['games'] / 1024:.0f} KB")
+    return out_dir
+
+
+def write_standalone(data: Dict, pack_dir: str, path: str, *,
+                     embed_games: int = 0, verbose: bool = True) -> str:
+    """Build the React app and fold it, plus the data, into one HTML file.
+
+    The existing report is one file that opens from ``file://`` and that
+    guarantee is load-bearing, so the single-file build keeps it: the bundle, the
+    stylesheet, the piece artwork and the data are all inlined, and the app
+    switches to hash routing when it detects a ``file://`` origin.
+    """
+    import shutil
+    import subprocess
+
+    ui_dir = os.path.join(ROOT, "ui")
+    if not os.path.isdir(ui_dir):
+        raise FileNotFoundError(
+            f"no {ui_dir} -- the React frontend is not present in this checkout"
+        )
+
+    # The pack decides which games carry their move data; embed_games only ever
+    # lowers that cap, so the rule lives in exactly one place.
+    if embed_games:
+        write_pack(data, pack_dir, embed_limit=embed_games, verbose=verbose)
+    else:
+        write_pack(data, pack_dir, verbose=verbose)
+
+    for args in (["npm", "install"], ["npm", "run", "build"]):
+        if verbose:
+            print(f"> npm {' '.join(args)}", flush=True)
+        result = subprocess.run(args, cwd=ui_dir, shell=(os.name == "nt"))
+        if result.returncode != 0:
+            raise RuntimeError(f"npm {' '.join(args)} failed")
+
+    script = os.path.join(ui_dir, "scripts", "inline-assets.mjs")
+    # Absolute paths, because the node process runs with cwd=ui_dir: a relative
+    # --out would be re-interpreted against ui/ and quietly write ui/out/... .
+    result = subprocess.run(
+        [
+            "node", script,
+            "--pack", os.path.abspath(pack_dir),
+            "--out", os.path.abspath(path),
+        ],
+        cwd=ui_dir, shell=(os.name == "nt"),
+    )
+    if result.returncode != 0:
+        raise RuntimeError("the standalone build failed")
+    return path
+
+
 def write_report(data: Dict, path: str, *, verbose: bool = True) -> str:
     """Render data.json into a single self-contained HTML file."""
     pgn_path = os.path.join(os.path.dirname(os.path.abspath(path)), "annotated.pgn")
@@ -834,6 +967,27 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Render a report from data.json")
     ap.add_argument("--data", default=os.path.join("out", "data.json"))
     ap.add_argument("--out", default=os.path.join("out", "report.html"))
+    ap.add_argument("--pack", action="store_true",
+                    help="write the report pack for the React app instead of the "
+                         "single-file report. --out names the directory.")
+    ap.add_argument("--standalone", action="store_true",
+                    help="build the React app and fold it, with the data, into one "
+                         "self-contained HTML file that opens from file://")
+    ap.add_argument("--pack-dir", default=os.path.join(ROOT, "out", "pack"),
+                    help="where the standalone build keeps its pack")
+    ap.add_argument("--embed-games", type=int, default=0, metavar="N",
+                    help="how many games carry their move data into the output. "
+                         "At ~70 KB per game the practical ceiling is a few dozen")
     args = ap.parse_args()
     with open(args.data, "r", encoding="utf-8") as fh:
-        write_report(json.load(fh), args.out)
+        data = json.load(fh)
+
+    if args.standalone:
+        write_standalone(data, args.pack_dir, args.out, embed_games=args.embed_games)
+    elif args.pack:
+        write_pack(data, args.out, embed_limit=args.embed_games)
+    else:
+        # The legacy single-file report reads the same dashboard, so it gets the
+        # rating series too rather than silently showing an older shape.
+        ensure_ratings(data)
+        write_report(data, args.out)

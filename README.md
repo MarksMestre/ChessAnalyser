@@ -33,7 +33,7 @@ loss_pp = winProb(before) - winProb(after)      # Lichess sigmoid, k = 0.0036820
 
 | Label | Rule |
 |---|---|
-| **Brilliant** `!!` | A sound sacrifice: material given ≥ 1.5 after the opponent's *best* reply, and the move still costs ≤ 2pp |
+| **Brilliant** `!!` | A sound sacrifice: material given ≥ 1.5 after the opponent's *best* reply, the move costs ≤ 2pp, the position was worth winning in (≥ 30% before) and is still acceptable afterwards (≥ 50%) |
 | **Great** `!` | Your move was the engine's, and it beat the next best by ≥ 10pp — there was literally nothing else |
 | **Book** | Matches a line in the lichess-openings database |
 | **Best / Excellent / Good** | loss ≤ 1 / 1–2 / 2–5 |
@@ -288,6 +288,80 @@ the annotated PGN embedded so the download works offline.
 Piece artwork is inlined from `chess.svg`, which embeds the SVG paths rather
 than linking external files, so there are no network requests and the report
 works on a plane.
+
+---
+
+## The interactive report
+
+The HTML above is the offline artefact. There is also a full app, for reading a
+whole archive rather than one file:
+
+```
+python report.py --pack --out out\pack     # once, to split the data
+python serve.py                            # http://127.0.0.1:8000/report.html/
+```
+
+**Overview** leads with your rating over time, then accuracy against opponent
+strength, the accuracy trend, the per-phase breakdown, recurring weaknesses,
+every brilliancy, and the best and worst games. Your name heads it, followed by
+one line per platform account — `Chess.com: MARK8HS · 5 games | LICHESS.ORG:
+mark8hs · no games` — because `--player me` has a *different* username per site.
+A site you have configured but that contributed no games to this run is listed
+and dimmed rather than dropped, so "you do not have that account" and "this
+report happens to be Chess.com-only" do not look the same.
+
+**Each game** gets a page at `/report.html/games/<id>`: the board on the left
+with the player's bars above and below, and on the right the move's
+classification and the engines' commentary **above** the move list, the list
+itself with an evaluation bar per half-move, and a transport with keyboard
+shortcuts. The arrow keys step through the game, `←`/`→`, `Home`/`End`, space to
+play, `f` flips the board and `Backspace` steps back one. The board shows the
+position **after** the selected move, so it always agrees with the move you
+clicked. The opening tab names the move where the game left theory — *"left
+theory on 3. g3"* — because that is the first move judged on its own merits
+rather than against a book line.
+
+**The board is playable.** Pick up a piece on the game page and the board answers
+with its legal destinations. Play the move the game played and the review carries
+on; play any other move and a **variation** opens under the move it diverges
+from, and the rest of that line is yours to play. A fork move is judged by the
+same engine and the same thresholds as a recorded one. The variation appears as a
+single indented continuation line — the way a score book sets one — and never
+displaces the recorded game. An amber banner tells you when you are inside one and
+offers a way back; auto-play is disabled there, because it follows the recorded
+game and has nothing to walk from a position that is not in it. `←`/`→` step along
+whichever line you are on, and `Backspace` removes a fork move or steps back a
+ply.
+
+**You can keep playing from scratch.** `/report.html/games/<id>/play` starts the
+position at any move and lets you play on from it — castling, en passant and
+promotion all work, because a real rules engine is checking them. Both sides are
+yours; there is no engine opponent. Stockfish is an advisor instead: it judges
+each move you make using *the same thresholds* the batch analysis used, so a move
+you play by hand and a move you played years ago are scored the same way, and it
+draws the **1–3 best moves** for the position as translucent grey arrows, ranked
+by opacity, with a `1`/`2`/`3` selector it remembers. Without the server the
+board still works — you just lose the arrows and the scoring, and moves it cannot
+judge are marked *not scored* rather than shown with a placeholder verdict.
+
+**Drill** (`/report.html/games/<id>/drill`) hides the answer and reveals it after
+you choose — either every one of your moves, or just the ones labelled an
+inaccuracy, a mistake or a blunder, which is usually what you actually want.
+
+### Why the data is split
+
+`data.json` is about 70 KB *per game*, so a 3089-game archive is ~216 MB — far
+too much to load into one page. `--pack` writes a light index plus one file per
+game, fetched when you open that game. Against a five-game archive the index is
+10% of the original, so the whole thing stays responsive.
+
+The offline guarantee still holds. `python report.py --standalone` folds the app,
+its artwork and the data into a single HTML file that opens from `file://` with
+no network and no console errors. Past a few dozen embedded games the file gets
+large, so beyond that cap the app says so rather than showing you an empty page;
+`python serve.py` has no such limit.
+
+See **[commands.md](commands.md)** for every flag.
 
 ---
 

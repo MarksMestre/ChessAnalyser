@@ -1,4 +1,4 @@
-# ===========================================================================
+﻿# ===========================================================================
 # What belongs in the repository
 # ===========================================================================
 #   tracked   source, docs, and the *_example.txt templates
@@ -9,7 +9,7 @@
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Tests — never committed. Verification comes from running the real pipeline
+# Tests â€” never committed. Verification comes from running the real pipeline
 # with different arguments (see commands.md, "Recipes"), not from a suite that
 # can drift away from the code it claims to cover.
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ tox.ini
 htmlcov/
 
 # ---------------------------------------------------------------------------
-# Personal config — real files ignored, templates tracked.
+# Personal config â€” real files ignored, templates tracked.
 #
 # Copy the template, fill it in:
 #   copy player_example.txt player.txt
@@ -51,7 +51,7 @@ secrets*.json
 secrets*.txt
 
 # ---------------------------------------------------------------------------
-# process_api/ — the source is tracked, everything it writes is not.
+# process_api/ â€” the source is tracked, everything it writes is not.
 #
 # The incremental fetcher's scripts are part of the project, so they belong in
 # git. Its data/ directory does not: `python -m process_api.cli` recreates every
@@ -60,7 +60,7 @@ secrets*.txt
 process_api/data/
 
 # ---------------------------------------------------------------------------
-# Engines and models — ~1 GB of third-party binaries, all re-downloadable.
+# Engines and models â€” ~1 GB of third-party binaries, all re-downloadable.
 #   python setup.py  puts every one of these back and verifies the install.
 #   StockFish : github.com/official-stockfish/Stockfish -> engines\stockfish\
 #   Lc0       : github.com/LeelaChessZero/lc0           -> engines\lc0-gpu\
@@ -101,7 +101,7 @@ dist/
 pip-wheel-metadata/
 
 # ---------------------------------------------------------------------------
-# Pipeline output — every file here is written by analyze.py / report.py
+# Pipeline output â€” every file here is written by analyze.py / report.py
 #   python analyze.py --player me --out out
 # ---------------------------------------------------------------------------
 out/
@@ -116,7 +116,7 @@ raw.pgn
 games/raw*.pgn
 
 # ---------------------------------------------------------------------------
-# Agent / editor / tool config — machine-local, not part of the project
+# Agent / editor / tool config â€” machine-local, not part of the project
 # ---------------------------------------------------------------------------
 .opencode/
 .claude/
@@ -150,3 +150,20 @@ Thumbs.db
 ehthumbs.db
 desktop.ini
 .DS_Store
+
+# Ignore Plans folder (.md files with specs to AI)
+plans/
+
+# ---------------------------------------------------------------------------
+# Node -- the React frontend
+# ---------------------------------------------------------------------------
+# node_modules/ is reproducible from ui/package.json, and ui/dist/ is written by
+# `npm run build`. Both are recreated by any of:
+#   python report.py --standalone      npm install + npm run build
+#   python serve.py --build            the same, without the data
+#   python serve.py --dev              Vite's dev server
+# ---------------------------------------------------------------------------
+node_modules/
+ui/node_modules/
+ui/dist/
+

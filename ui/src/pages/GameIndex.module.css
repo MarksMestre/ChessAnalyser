@@ -1,0 +1,102 @@
+.page {
+  padding: var(--sp-5);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.filters {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.select {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+}
+
+.table td {
+  white-space: nowrap;
+}
+
+.date {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.gameLink {
+  display: block;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+
+.opponent {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.count {
+  text-align: center;
+  width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.more {
+  padding: var(--sp-3);
+  border-top: 1px solid var(--line-soft);
+  text-align: center;
+}
+
+.moreBtn,
+.clear {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  padding: 6px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.moreBtn:hover,
+.clear:hover {
+  background: var(--panel-3);
+}

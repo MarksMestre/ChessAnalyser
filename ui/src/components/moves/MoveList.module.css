@@ -1,0 +1,260 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* The transport sits below this, so the list stops above it. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  /* Colour-only transitions on the border and background, so this stays cheap
+     even with a few hundred rows. */
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+
+.row:hover {
+  background: var(--panel-2);
+}
+
+/* The selected row is marked by an accent edge as well as a background change,
+   so it is still identifiable without colour vision. */
+.selected {
+  background: var(--accent-soft) !important;
+  border-left-color: var(--accent);
+}
+
+/* Opponent moves recede: they have no classification to read. */
+.opponent {
+  color: var(--fg-muted);
+}
+.opponent .san {
+  font-weight: 400;
+}
+
+.number {
+  width: 30px;
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.san {
+  font-weight: 600;
+  min-width: 46px;
+}
+
+.glyph {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: -0.5px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.eval {
+  width: 44px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  width: 44px;
+  flex: 0 0 auto;
+}
+
+.loss {
+  width: 32px;
+  text-align: right;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+
+.loss.warn {
+  color: var(--label-inaccuracy);
+}
+.loss.bad {
+  color: var(--label-mistake);
+}
+.loss.loss {
+  color: var(--label-blunder);
+  font-weight: 650;
+}
+
+.tail {
+  height: 4px;
+  flex: 0 0 auto;
+}
+
+/* A row plus whatever hangs off it. The wrapper exists only so a variation can sit
+   directly beneath the row it forks from; it must not add spacing of its own. */
+.slot {
+  display: contents;
+}
+
+/* ---------------------------------------------------------------- variation */
+
+/*
+ * A continuation line, the way a score book sets one.
+ *
+ * The bar is 2px and `--line`, not an accent colour: a subline should read as
+ * present and secondary, and an accent-coloured bar would make it look like the
+ * thing you are reading.
+ */
+.variation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 10px 5px 14px;
+  margin: 2px 0 2px 14px;
+  border-left: 2px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  font-size: 12.5px;
+}
+
+/* One numbered group within the line, so "3. d4 cxd4" stays together when the
+   row wraps rather than breaking between the halves of a move. */
+.variationRun {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.variationNumber {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+  text-align: right;
+}
+
+.variationMove {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.variationMove:hover {
+  background: var(--panel-3);
+}
+
+.variationSelected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.variationPending {
+  color: var(--fg-dim);
+}
+
+/* The same 9px spinner the play page uses, so "being analysed" looks the same
+   wherever it appears. */
+.variationSpin {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-dim);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* In the paired layout the line has no room of its own, so it sits under the pair
+   it forks from. */
+.variationInline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+  margin-top: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.empty {
+  padding: var(--sp-5);
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------- Paired view */
+
+.pairs {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
+.half {
+  min-width: 54px;
+  padding: 3px 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.half:hover {
+  background: var(--panel-2);
+}
+
+.half.opponent {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.half.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}

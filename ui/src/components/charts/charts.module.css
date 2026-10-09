@@ -1,0 +1,180 @@
+.chartWrap {
+  width: 100%;
+  position: relative;
+}
+
+/*
+ * A fixed height, and a viewBox that matches it.
+ *
+ * This used to be a 720x200 viewBox with `preserveAspectRatio="none"`, which
+ * scales x and y independently: in a 1800px panel every glyph — tick labels,
+ * dots — was stretched 2.3x horizontally. `vector-effect: non-scaling-stroke`
+ * below could not fix that; it protects stroke width, not text, and not the
+ * geometry of a circle.
+ *
+ * Now LineChart and EvalGraph measure this element and set the viewBox to the
+ * real pixel size (see lib/useMeasure.ts), so one user unit is one CSS pixel
+ * and there is nothing left to distort. The fixed height stays: it is what
+ * reserves the space before the first measurement lands, and it keeps the
+ * chart from growing to fill whatever space a flex parent offers.
+ */
+.chart {
+  width: 100%;
+  height: 220px;
+  display: block;
+  overflow: visible;
+  /* A flex parent may otherwise refuse to let it shrink below its content. */
+  min-width: 0;
+}
+
+.chart path,
+.chart line,
+.chart circle {
+  vector-effect: non-scaling-stroke;
+}
+
+.grid {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+}
+
+.tick {
+  fill: var(--fg-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.axisLabel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+
+/* The draw-in: the line is revealed along its own length. `pathLength` on the
+   element normalises the geometry to 1, so the dash maths is unitless and the
+   same value works at any chart size. */
+.line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: var(--draw, 1000);
+  stroke-dashoffset: var(--draw, 1000);
+  animation: draw var(--t-draw) var(--ease-out) forwards;
+}
+
+.comparison {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 4;
+  opacity: 0.75;
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.dot {
+  stroke: var(--panel);
+  stroke-width: 1.5;
+}
+
+.spark {
+  display: block;
+}
+
+.sparkZero {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+/*
+ * The measured box for the eval graph. It wraps the SVG because ResizeObserver
+ * needs an element with a real layout box, and an SVG with only percentage
+ * dimensions is a poor thing to observe.
+ */
+.evalWrap {
+  width: 100%;
+}
+
+/*
+ * A fixed height, not `auto`. A fluid height made the graph grow to fill
+ * whatever space the flex column had — 170px tall on a wide screen and
+ * squashed on a narrow one.
+ */
+.evalGraph {
+  width: 100%;
+  height: 96px;
+  display: block;
+  cursor: crosshair;
+  border-radius: var(--r-sm);
+  min-width: 0;
+}
+
+.evalGraph path,
+.evalGraph line,
+.evalGraph circle {
+  vector-effect: non-scaling-stroke;
+}
+
+.cursor {
+  stroke: var(--fg);
+  stroke-width: 1;
+  opacity: 0.75;
+}
+
+/* ------------------------------------------------------------------ Bars */
+
+.bars {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.barCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 78px;
+}
+
+.barValue {
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.barTrack {
+  width: 44px;
+  background: var(--panel-2);
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+}
+
+.barFill {
+  width: 100%;
+  background: linear-gradient(180deg, #6ba0ff, var(--accent));
+  /* Height animates so a re-sort is legible rather than a jump-cut. */
+  transition: height var(--t-slow) var(--ease-out);
+}
+
+.barLabel {
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.barCaption {
+  font-size: 10px;
+  color: var(--fg-dim);
+}

@@ -1,0 +1,41 @@
+.wrap {
+  position: relative;
+  width: 100%;
+  background: #2b3446;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 25%);
+}
+
+/*
+ * A width transition rather than an instant jump: the bar conveys a magnitude,
+ * and watching it move is what makes a 40-point drop legible at a glance.
+ * Only width animates, so this stays on the compositor.
+ */
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #f4f6f8, #dfe4ea);
+  border-radius: var(--r-pill);
+  transition: width var(--t-slow) var(--ease-out);
+}
+
+.labels {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  pointer-events: none;
+}
+
+.strong {
+  color: #fff;
+}

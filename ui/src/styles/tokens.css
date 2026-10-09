@@ -1,0 +1,106 @@
+/**
+ * Design tokens.
+ *
+ * Every colour, duration and easing in the app resolves to one of these. No
+ * component hardcodes a value: that is what keeps the dark theme coherent, and
+ * it is also the price of admission for a light theme later.
+ */
+
+:root {
+  /* -- surfaces, darkest to lightest ------------------------------------ */
+  --bg: #0d0f14;
+  --panel: #151922;
+  --panel-2: #1c2230;
+  --panel-3: #242c3d;
+  --line: #2a3140;
+  --line-soft: #212734;
+
+  /* -- text ------------------------------------------------------------- */
+  --fg: #e6e9f0;
+  --fg-muted: #8b94a7;
+  --fg-dim: #616b80;
+
+  /* -- accent ----------------------------------------------------------- */
+  --accent: #4c8bf5;
+  --accent-soft: #4c8bf526;
+  --accent-line: #4c8bf559;
+
+  /* -- classification ---------------------------------------------------
+     Each label carries a colour *and* a glyph, never colour alone, so the
+     distinction survives a colour-blind reader and a greyscale print. */
+  --label-brilliant: #26a69a;
+  --label-great: #9b7fe0;
+  --label-book: #6f8fbd;
+  --label-best: #7fbf8f;
+  --label-excellent: #8fc98a;
+  --label-good: #b8c46a;
+  --label-inaccuracy: #f9a825;
+  --label-mistake: #ef6c00;
+  --label-blunder: #e05252;
+  --label-miss: #4a90d9;
+
+  --win: #26a69a;
+  --loss: #e05252;
+  --draw: #8b94a7;
+
+  /* -- board ------------------------------------------------------------ */
+  --sq-light: #b9c4b0;
+  --sq-dark: #6f8f68;
+  /* Free play. One step lighter in the same hue family, so the piece artwork
+     still reads and the page says "you are playing here now" without becoming
+     a second theme. */
+  --sq-light-play: #c9d3c0;
+  --sq-dark-play: #7d9d76;
+  --sq-light-hl: #d8e0a8;
+  --sq-dark-hl: #a8bf7a;
+  --coord: #aab4c0;
+
+  /* -- geometry --------------------------------------------------------- */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 13px;
+  --r-pill: 999px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 22px;
+  --sp-6: 30px;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 6px 22px rgb(0 0 0 / 45%);
+  --shadow-3: 0 14px 44px rgb(0 0 0 / 55%);
+
+  /* -- motion -----------------------------------------------------------
+     Nothing exceeds 400ms; longer than that stops reading as responsive. */
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 260ms;
+  --t-draw: 400ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+ * Respect the OS setting. This is not optional: an animation that ignores it
+ * can make the board genuinely unpleasant to use for some people, and it is
+ * the difference between "animated" and "accessible".
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+    --t-slow: 0ms;
+    --t-draw: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
